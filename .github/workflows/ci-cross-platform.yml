@@ -8,6 +8,16 @@ on:
 permissions:
   contents: read
 
+# Superseded pushes used to queue a fresh full matrix each, and the older run kept holding
+# runners. On 2026-09-21 five Cross-Platform Tests runs were alive at once — two of them over 90 minutes old,
+# because their jobs were started before `timeout-minutes` existed — and the 9 windows jobs inside
+# them starved the whole account: 30+ runs sat queued and even the ubuntu legs could not start.
+# Cancelling a superseded *pull-request* run is always right, since the newer head is the one being
+# judged. Pushes to main are left to finish so their verdict is never thrown away.
+concurrency:
+  group: ci-cross-platform-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     strategy:
@@ -20,6 +30,12 @@ jobs:
           - os: macos-latest
             python-version: "3.11"
     runs-on: ${{ matrix.os }}
+    # Bound the leg. Without this a hang holds a runner for the default 6 hours: measured
+    # 2026-09-21, all three windows-latest legs sat in "Run Tests" for over 50 minutes on two
+    # different runs (one of them a docs-only PR), and a job that never ends reports nothing —
+    # not the failing test, not even a verdict. A normal leg is a few minutes; 30 is headroom,
+    # not a budget.
+    timeout-minutes: 30
     env:
       # Windows consoles default to cp1252, and this repository's scripts print non-ASCII by design
       # (✅/✗, box drawing, and Chinese in the installer and lesson tooling). A script that cannot
