@@ -980,6 +980,46 @@ const BM25_STOPWORDS = new Set([
   "good", "some", "could", "them", "see", "other", "than", "then",
 ]);
 
+// ── CJK tokenisation (#2250, CJK-1) ────────────────────────────────────────────────────────────────
+//
+// `bm25Tokenize` above is a Latin tokenizer: it lowercases, splits on `[^a-z0-9]+` and drops tokens
+// shorter than two characters. Applied to Chinese or Japanese it therefore produces **nothing at all** —
+// `文件系统沙箱` becomes the empty string, which is why a mixed query's CJK half carries no weight and two
+// Latin tokens decide the answer (measured 2026-09-27: `wsl2 landlock 文件系统沙箱` returned an unrelated
+// lesson, while the same shape with a strong Latin half returned the right one).
+//
+// The standard fix in BM25 systems is character n-grams — Lucene's `CJKBigramFilter` — rather than word
+// segmentation: no dictionary to ship or maintain, and short queries work better. SQLite's `unicode61`
+// offers neither, which is the root cause here rather than a parameter.
+//
+// Two deliberate choices, both cheap to get wrong:
+//
+//   * **Runs, not the whole string.** Bigrams are emitted per run of CJK characters, so `wsl2 文件系统`
+//     cannot produce a bigram spanning the space (that would be a term nobody can type).
+//   * **A single-character run emits that character.** A one-character Chinese query is common, and
+//     bigrams alone would make it unmatchable.
+//
+// This is the *tokenizer* half of CJK-1 and nothing else: it does not touch the index, the scoring, or any
+// existing term namespace, so English postings and `avgDocLen` are byte-identical until the channel that
+// consumes these tokens is added (in `index.cjk`, next to — never mixed into — `index.terms`).
+// Kana, Hangul, the BMP ideograph blocks, and the supplementary ideograph planes (Extension B onward,
+// which are beyond UTF-16's basic plane and therefore need the `u` flag — otherwise a surrogate pair is
+// split into two half-characters and the bigram built from it matches nothing).
+const CJK_CLASS = "\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\uac00-\\ud7af"
+  + "\\u{20000}-\\u{2a6df}\\u{2a700}-\\u{2b73f}\\u{2b740}-\\u{2b81f}\\u{2b820}-\\u{2ceaf}\\u{2f800}-\\u{2fa1f}";
+const CJK_CHAR = new RegExp(`[${CJK_CLASS}]`, "u");
+
+function cjkBigrams(text) {
+  const runs = String(text || "").match(new RegExp(`[${CJK_CLASS}]+`, "gu")) || [];
+  const out = new Set();
+  for (const run of runs) {
+    const chars = [...run];                     // code points, so a surrogate pair is one character
+    if (chars.length === 1) { out.add(chars[0]); continue; }
+    for (let i = 0; i + 1 < chars.length; i += 1) out.add(chars[i] + chars[i + 1]);
+  }
+  return [...out];
+}
+
 function bm25Tokenize(text) {
   const lower = text.toLowerCase();
   // Split on non-alphanumeric, get base tokens
@@ -2931,9 +2971,11 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
       // the relevance floor keeps judging what the user typed (see searchLessonsBM25).
       results = searchLessonsBM25(bm25Index, scoringQuery, args.domain, args.top || 5, args.query);
       source = "worker-bm25";
+      noteSearchBackend(env, "bm25");
       debugLog(env, 2, "BM25 search", { query: scoringQuery, results: results.length });
     } else {
       results = searchLessons(lessons, scoringQuery, args.domain, args.top || 5, args.query);
+      noteSearchBackend(env, "fallback");
       debugLog(env, 2, "Fallback search", { query: scoringQuery, results: results.length });
     }
 
@@ -5104,6 +5146,24 @@ const TRAFFIC_TYPES = ["mcp", "agent", "crawler", "pageview"];
 // client*, never a user count.
 const MCP_CLIENT_BUCKET_PREFIX = "mcpclient:";
 
+// Which search implementation answered (#2121).
+//
+// Two implementations serve `/mcp` searches — the BM25 index built from the rich D1 projection, and the
+// naive matcher over the same rows when that index is unavailable — and they rank differently. Before
+// this counter, "search gave me a bad answer" could not be attributed to either one from outside the
+// worker, so the question "which of the two should be deleted?" had no data behind it (#2121), and the
+// reports that did arrive (a mixed CJK query returning an unrelated lesson, for instance) could not be
+// told apart from index unavailability.
+//
+// Counting only: the ranking is untouched. It reuses the traffic buffer, so it costs one batched write
+// per flush rather than one write per query.
+const SEARCH_BACKEND_BUCKET_PREFIX = "searchbackend:";
+const SEARCH_BACKENDS = ["bm25", "fallback"];
+
+function noteSearchBackend(env, backend) {
+  bufferTraffic(env, null, SEARCH_BACKEND_BUCKET_PREFIX + backend);
+}
+
 function mcpClientBucket(params, request) {
   const declared = params && params.clientInfo && (params.clientInfo.name || params.clientInfo.title);
   const ua = (request && request.headers && request.headers.get("User-Agent")) || "";
@@ -5146,7 +5206,7 @@ async function readTrafficCount(env, cls, day) {
  * Calls today, per self-declared MCP client (`mcpclient:<name>` buckets). D1 only: the KV fallback
  * cannot enumerate keys, and inventing that here would cost more than the missing number is worth.
  */
-async function readMcpClientCounts(env, day) {
+async function readCounterBuckets(env, day, prefix, label) {
   const d1 = d1Binding(env);
   if (!d1) return {};
   try {
@@ -5154,15 +5214,22 @@ async function readMcpClientCounts(env, day) {
       `SELECT bucket, count FROM counters
         WHERE scope = ?1 AND period = ?2 AND bucket LIKE ?3
         ORDER BY count DESC LIMIT 50`,
-    ).bind("traffic", day, `${MCP_CLIENT_BUCKET_PREFIX}%`).all();
+    ).bind("traffic", day, `${prefix}%`).all();
     return Object.fromEntries((results || []).map(row => [
-      String(row.bucket).slice(MCP_CLIENT_BUCKET_PREFIX.length), Number(row.count) || 0,
+      String(row.bucket).slice(prefix.length), Number(row.count) || 0,
     ]));
   } catch (error) {
-    logInternal("mcp client counts read failed", error);
+    logInternal(`${label} counts read failed`, error);
     return {};
   }
 }
+
+const readMcpClientCounts = (env, day) =>
+  readCounterBuckets(env, day, MCP_CLIENT_BUCKET_PREFIX, "mcp client");
+
+/** How many searches each implementation answered today (#2121). */
+const readSearchBackendCounts = (env, day) =>
+  readCounterBuckets(env, day, SEARCH_BACKEND_BUCKET_PREFIX, "search backend");
 
 /**
  * One `counters` row, or `null` when it does not exist — the difference matters when a value is being
@@ -5667,6 +5734,10 @@ export default {
         const today = new Date().toISOString().slice(0, 10);
         // Same reader as the aggregator, so the endpoint and the monthly roll-up cannot disagree
         // about what "today's traffic" is (D1 first, legacy KV key as the fallback).
+        //
+        // `/api/analytics/traffic` is where this belongs long-term; it needs a D1 binding for the
+        // bucket enumeration either way, and the index endpoint is the one already read when the
+        // question is "is search healthy".
         const entries = await Promise.all(
           TRAFFIC_TYPES.map(async cls => [cls, await readTrafficCount(env, cls, today)])
         );
@@ -5832,6 +5903,9 @@ export default {
           // published. They disagreeing is the freeze this endpoint exists to make visible, and the
           // reason is in `lastRefresh.reason` ("fresh" while they disagree = the comparison is wrong).
           behindBy: Number.isFinite(health?.corpusCount) ? health.corpusCount - index.docCount : null,
+          // Which implementation answered today's searches (#2121): `{bm25: N, fallback: M}`. Empty
+          // without a D1 binding, for the same reason `mcpClients` is.
+          servedBy: await readSearchBackendCounts(env, new Date().toISOString().slice(0, 10)),
           lastRefresh: health || null,
           corpusHint: "compare docCount against data/lessons.json; a frozen builtAt means the write failed",
         });
@@ -6509,6 +6583,9 @@ export {
   TRAFFIC_FLUSH_BATCH,
   mcpClientBucket,
   MCP_CLIENT_BUCKET_PREFIX,
+  noteSearchBackend,
+  SEARCH_BACKEND_BUCKET_PREFIX,
+  SEARCH_BACKENDS,
   // Exported for workers/kv-write-family.test.mjs: the family mapping decides the rows the ranking is
   // built from, so it is worth asserting without a database.
   kvKeyFamily,
@@ -6540,6 +6617,8 @@ export {
   buildBM25Index,
   indexShapeProblem,
   bm25Tokenize,
+  cjkBigrams,
+  CJK_CHAR,
   matchTokens,
   // Query alias expansion (#1780) — exported so workers/query-alias-expansion.test.mjs
   // can assert the intermediate scoring query and compare it with the Python port.
