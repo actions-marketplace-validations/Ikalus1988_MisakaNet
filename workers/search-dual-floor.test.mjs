@@ -11,12 +11,13 @@
 // through the real MCP handler, with alias expansion on (the production default):
 //
 //   language   rows   top-1   top-3
-//   English     20    16/20   19/20
-//   CJK         22     6/22   11/22
+//   English     20    16/20   19/20   (unchanged by the CJK channel, #2356 — the floor is the same)
+//   CJK         22    11/22   15/22   (was 6/22 and 11/22; the bigram channel and its fusion, #2355/#2356)
 //
 // Both are *floors*, not equalities: the corpus grows, and a row that moves reds this gate only when
-// recall actually drops. Raising a floor is how an improvement is recorded — the CJK numbers are
-// expected to rise when #2355/#2356 land, and that is the point of writing them down now. Lowering one
+// recall actually drops. Raising a floor is how an improvement is recorded — the CJK pair was raised
+// from 6/22 and 11/22 on 2026-09-28, when the bigram channel (#2355) and its fusion (#2356) landed and
+// the English pair did not move at all. That is the property this file exists for. Lowering one
 // means accepting less than the code did on 2026-09-28, so it needs a reason in the commit message.
 //
 // The CJK set is `scripts/eval_query_aliases.py`'s twenty questions (the corpus's own measure of the
@@ -41,7 +42,7 @@ import { testToken } from './_test-token.mjs';
 // Exported so the schema test and this file cannot disagree about which corpus these numbers describe.
 export const MEASURED_ON = '2026-09-28, data/lessons.json at 418 rows';
 export const EN_FLOOR = { hit1: 16, hit3: 19 };
-export const ZH_FLOOR = { hit1: 6, hit3: 11 };
+export const ZH_FLOOR = { hit1: 11, hit3: 15 };
 
 export const QUERIES = readFileSync(new URL('../data/search-floor-queries.jsonl', import.meta.url), 'utf8')
   .split('\n')
@@ -154,6 +155,23 @@ test('both sets were actually run — a floor over an empty set cannot fail', ()
   for (const shape of ['latin', 'body-only', 'cjk', 'mixed', 'two-char']) {
     assert.ok(shapes.has(shape), `the bench no longer covers the "${shape}" shape (#2357 asks for it)`);
   }
+});
+
+test('the production-measured confidently-wrong answer is gone (#2358)', async () => {
+  // The query #2358 records from production: on 2026-09-27 the MCP endpoint answered it with
+  // `chrome-relay-browser-automation` — a lesson about driving a headless browser — because the two
+  // Latin tokens decided it (the CJK half contributed no statistics). The corpus still has no landlock
+  // lesson, so `no_match` is an honest answer here; an unrelated lesson is not. This is the case on the
+  // *real* corpus, which the fixture in `workers/search-floor-term-space.test.mjs` cannot cover: there
+  // the shape is reproduced in isolation, here it is pinned where it was measured.
+  const { ids, noMatch } = await search('wsl2 landlock 文件系统沙箱');
+  assert.ok(!ids.includes('chrome-relay-browser-automation'),
+    `the unrelated WSL2 browser-automation lesson is back: ${JSON.stringify(ids)}`);
+  if (noMatch) return;
+  const top = CORPUS.find((l) => l.id === ids[0]);
+  assert.ok(top, `the answer names a lesson the corpus does not have: ${ids[0]}`);
+  assert.ok(['wsl', 'linux'].includes(top.domain),
+    `the answer to a WSL2 filesystem-sandbox question is a ${top.domain} lesson: ${JSON.stringify(ids)}`);
 });
 
 test('a body-only query is answered from the body, not the title', () => {

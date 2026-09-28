@@ -841,6 +841,11 @@ function relevanceFloor(termDf, docCount) {
 // 0.60 13/15·5/5 · 0.70 13/15·5/5 · 0.80 12/15·5/5.
 //
 // So 0.55 is the smallest value that rejects every unanswerable query, and 0.80 starts costing recall.
+// Re-measured 2026-09-28 with the same probe, after #2358 moved the coverage ratio's numerator onto
+// `floorTerms`: **identical, row for row** (0.30 13/15·3/5 · 0.45 13/15·3/5 · 0.50 13/15·4/5 ·
+// 0.55 13/15·5/5 · 0.60 13/15·5/5 · 0.70 13/15·5/5 · 0.80 12/15·5/5). The numerator can only shrink
+// for a query whose alias expansion matched, and none of the fifteen positives is reached that way — so
+// this table still describes the code, and 0.55 is still the smallest value that rejects all five.
 // This paragraph replaces a provenance that could not be re-run ("calibrated on 14 positives and 10
 // negatives: 0.55 separates them 14/14 and 10/10, where 0.45 admits three negatives and 0.65 drops
 // positives"): those sets were never committed — the test in the same commit asserted 4 and 5 — so the
@@ -1262,11 +1267,151 @@ function scoringQueryFor(query, env) {
   return compounds.length ? `${report.expanded} ${compounds.join(" ")}` : report.expanded;
 }
 
+// ── the CJK channel's ranking, and how the two channels are fused (#2356) ────
+//
+// The channel exists to answer the case that has no Latin token to carry it. Measured on production
+// (2026-09-27): `wsl2 landlock 文件系统沙箱` returned `chrome-relay-browser-automation` — an unrelated
+// lesson — because the two Latin tokens decided the answer and the Chinese half contributed nothing.
+//
+// Two rules make this safe, and they are the reason it is a *fusion* rather than a rewrite:
+//
+//   1. **Each channel is judged inside its own term space.** The bigram ranking runs the same
+//      `relevanceFloor` / `queryIdfTotal` / `RELEVANCE_MIN_COVERAGE` machinery over `index.cjk`, with
+//      that map's own `df`, `idf`, `docLen` and `avgDocLen`. The alternative — one IDF ratio summed
+//      across both maps — is what `workers/search-cjk-recall.test.mjs` warns about in its own words:
+//      "an IDF ratio computed across two disjoint term spaces", which rejects documents that answer
+//      the query. There is no cross-space arithmetic anywhere in this file.
+//   2. **Ranks are fused, scores are not compared.** BM25 scores from two maps with different
+//      vocabularies and different average document lengths are not on one scale, so Reciprocal Rank
+//      Fusion combines *positions* (`1/(k+rank)`) and never the numbers themselves. RRF is also why
+//      this is not the weight-tuning that four earlier designs tried and lost English recall to
+//      (#2250): a document that matches both channels gets two contributions, one that matches one
+//      channel gets one, and no channel is switched off by looking at the query's script.
+//
+// The English path is untouched: for a query with no CJK, `cjkBigrams` finds nothing, the ranking
+// below is empty, and `searchLessonsBM25` returns exactly what it returned before. That is asserted
+// byte-for-byte in `workers/search-cjk-index-channel.test.mjs` and by the English floor in
+// `workers/search-dual-floor.test.mjs`.
+const RRF_K = 60;
+
+// Each channel's vote is weighted by how much of *its own* query terms the document matched. Without it
+// a rank-1-vs-rank-1 tie is decided by whichever channel happens to come first in the sort, which on the
+// real corpus put the unrelated WSL2 browser-automation lesson back on top for
+// `wsl2 landlock 文件系统沙箱` (measured 2026-09-28 — the fusion moved the bench but not that case).
+// The weight is a coverage *ratio* per channel, never a comparison of scores across the two maps.
+function share(entry) {
+  const covered = Number.isFinite(entry.covered) ? entry.covered : 1;
+  return covered > 0 ? covered : 0;
+}
+
+function rankCjkChannel(index, query, domain) {
+  const cjk = index && index.cjk;
+  if (!cjk || !cjk.terms || !cjk.docCount) return [];
+  const grams = cjkBigrams(query);
+  if (!grams.length) return [];
+  const present = grams.filter((gram) => cjk.terms[gram]);
+  if (!present.length) return [];
+
+  const { k1 = 1.5, b = 0.75, avgDocLen = 0, terms, docLen } = cjk;
+  const scores = new Float64Array(cjk.docCount);
+  const matched = new Uint8Array(cjk.docCount);
+  const coverage = new Uint8Array(cjk.docCount);
+  const matchedIdf = new Float64Array(cjk.docCount);
+  const termDf = new Map();
+  for (const gram of present) {
+    const { idf, docs: entries } = terms[gram];
+    termDf.set(gram, entries.length);
+    for (const entry of entries) {
+      const { doc, tf } = entry;
+      const len = docLen && Number.isFinite(docLen[doc]) ? docLen[doc] : 0;
+      const norm = avgDocLen ? 1 - b + b * (len / avgDocLen) : 1;
+      scores[doc] += idf * ((tf * (k1 + 1)) / (tf + k1 * norm));
+      matched[doc] = 1;
+      coverage[doc] += 1;
+      matchedIdf[doc] += idf;
+    }
+  }
+
+  // The floor, computed over *this* channel's statistics for exactly the query's bigrams.
+  const floor = relevanceFloor(termDf, cjk.docCount);
+  const idfTotal = queryIdfTotal(present, terms, cjk.docCount);
+  const informative = new Uint8Array(cjk.docCount);
+  for (const gram of floor.informative) {
+    for (const entry of (terms[gram] ? terms[gram].docs : [])) informative[entry.doc] = 1;
+  }
+
+  const out = [];
+  for (let i = 0; i < cjk.docCount; i++) {
+    if (!matched[i]) continue;
+    if (coverage[i] < floor.required) continue;
+    if (!informative[i]) continue;
+    if (!idfTotal || matchedIdf[i] / idfTotal < RELEVANCE_MIN_COVERAGE) continue;
+    const doc = index.docs[i];
+    if (!doc) continue;
+    if (domain && doc.domain && doc.domain.toLowerCase() !== domain.toLowerCase()) continue;
+    out.push({ doc, score: scores[i], covered: coverage[i] / grams.length });
+  }
+  out.sort((a, b) => b.score - a.score);
+  return out;
+}
+
+/** Reciprocal Rank Fusion of the English ranking and the bigram ranking, by document id. */
+function fuseRankings(english, cjk, k = RRF_K) {
+  const fused = new Map();
+  english.forEach((entry, rank) => {
+    const id = entry.doc && entry.doc.id;
+    if (!id) return;
+    fused.set(id, { doc: entry.doc, score: entry.score, userScore: entry.userScore,
+                    rrf: share(entry) / (k + rank + 1), channels: 1 });
+  });
+  cjk.forEach((entry, rank) => {
+    const id = entry.doc && entry.doc.id;
+    if (!id) return;
+    const contribution = share(entry) / (k + rank + 1);
+    const existing = fused.get(id);
+    if (existing) {
+      existing.rrf += contribution;
+      existing.channels += 1;
+      // The document answered both channels; keep the English score as the reported one so the number a
+      // caller sees stays on the scale it was on before, and the bigram score only as a tie-break.
+      existing.cjkScore = entry.score;
+    } else {
+      fused.set(id, { doc: entry.doc, score: entry.score, userScore: null, rrf: contribution, channels: 1,
+                      cjkScore: entry.score, cjkOnly: true });
+    }
+  });
+  return [...fused.values()].sort((a, b) =>
+    (b.rrf - a.rrf)
+    || (b.channels - a.channels)
+    // Ties inside the fusion fall back to the orderings the channels themselves produced: the user's own
+    // words first (the rule #1780 established), then the channel scores. No section of this compares a
+    // bigram score with an English one.
+    || ((b.userScore || 0) - (a.userScore || 0))
+    || ((b.cjkScore || 0) - (a.cjkScore || 0))
+    || ((b.score || 0) - (a.score || 0)));
+}
+
 function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
   if (!index || !index.terms || !index.docs || !query) return [];
 
   const queryTerms = bm25Tokenize(query);
-  if (queryTerms.length === 0) return [];
+
+  // ── the two channels, and the one gate that decides whether to answer at all ──
+  // The bigrams come from the query the *user* typed (`floorQuery` on the MCP path), never from the
+  // alias expansion: expansion rewrites Chinese into English words, and a bigram of a rewritten query
+  // would describe a query nobody asked. The channel is not switched on by looking at the script of the
+  // query — it is asked whether it has postings for this query's bigrams, which is the only question
+  // whose answer means anything here (#2356: "never gate on script").
+  const cjkQuery = floorQuery || query;
+  const cjkRanked = rankCjkChannel(index, cjkQuery, domain);
+
+  // This used to be `if (queryTerms.length === 0) return []`, which is #1780's zero-term symptom: for a
+  // query with no Latin token the function returned before scoring anything, so a Chinese question that
+  // the alias table does not know could not be answered *even with the bigram channel in place*. The
+  // gate now asks the question that actually matters — does the query have terms in *either* channel —
+  // and a CJK-only query is then answered by the bigram ranking alone (the English path admits nothing,
+  // and the fusion of an empty list with one list is that list).
+  if (queryTerms.length === 0 && cjkRanked.length === 0) return [];
 
   // #1780 (query alias expansion): the relevance floor judges the words the *user*
   // typed — `floorQuery`, the pre-expansion query — while the expanded terms may only
@@ -1286,7 +1431,10 @@ function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
   const matched = new Uint8Array(docCount);
   const coverage = new Uint8Array(docCount);       // distinct query terms per doc
   const informative = new Uint8Array(docCount);    // … that are discriminating
-  const matchedIdf = new Float64Array(docCount);   // IDF mass matched, per doc
+  // The floor's own counters, accumulated from `floorTerms` and nothing else: the same term set
+  // `floor.required` and `idfTotal` below are computed from. See the note at the floor.
+  const floorCoverage = new Uint8Array(docCount);
+  const floorMatchedIdf = new Float64Array(docCount);
   const termDf = new Map();
 
   // Which terms may decide the *order* (2026-09-23, #2079). `floorTerms` is the user's own words
@@ -1303,7 +1451,9 @@ function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
   // 7.93 · 7.48 · 6.51, which is what the formula always said.
   const orderingTerms = new Set(floorTerms);
 
-  // Score each document using BM25
+  // Score each document using BM25. `queryTerms` is empty for a CJK-only query the alias table does not
+  // know: every array below stays zero, `results` comes out empty, and the fused list is the bigram
+  // ranking — which is the point of the branch above.
   for (const term of queryTerms) {
     const termData = terms[term];
     if (!termData) continue;
@@ -1317,10 +1467,14 @@ function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
       const norm = 1 - b + b * (len / avgDocLen);
       const score = idf * ((tf * (k1 + 1)) / (tf + k1 * norm));
       scores[doc] += score;
-      if (decidesOrder) userScores[doc] += score;
+      if (decidesOrder) {
+        userScores[doc] += score;
+        // … and the floor's counters, which is the same set of terms (see the floor note below).
+        floorCoverage[doc] += 1;
+        floorMatchedIdf[doc] += idf;
+      }
       matched[doc] = 1;
       coverage[doc] += 1;
-      matchedIdf[doc] += idf;
     }
   }
 
@@ -1339,14 +1493,35 @@ function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
   }
 
   // Collect and sort results
+  //
+  // The floor is evaluated in ONE term space (#2358). `floor.required` and `idfTotal` are both
+  // computed from `floorTerms` — the words the user typed — so the document's side of the comparison
+  // has to be counted from those same words. It used to be counted from `queryTerms` (typed words
+  // *plus alias expansions*), which let a guess supply mass the denominator never contained. The
+  // measured case: `wsl2 landlock 文件系统沙箱` — the tokenizer cannot see the CJK words, so the floor
+  // terms are `wsl2·landlock` (idfTotal 9.966), while the alias table adds `sandbox` from 沙箱.
+  // `chrome-relay-browser-automation` matches `wsl2`+`sandbox` = 6.747, i.e. 0.677 against that
+  // denominator — above RELEVANCE_MIN_COVERAGE, so an unrelated lesson was returned as the answer.
+  // Counted from the floor terms it is 3.235/9.966 = 0.325 and the floor refuses it, which is what
+  // it was written to do. `covered` (below) stays over `queryTerms`: it is the fusion weight, and it
+  // describes this channel's own term space rather than the floor's.
+  //
+  // This is *not* the design `workers/search-cjk-recall.test.mjs` measured as row four of #2250's table
+  // ("counting coverage only over the user's words" → 0/20 zh, 4/15 English). That design moved the
+  // tokenizer and the scoring query, so the floor started judging CJK bigrams while the scorer still
+  // scored English. Nothing about the tokens, the scoring query or `floorTerms` changes here: all three
+  // of the floor's other parts (`required`, `informative`, `idfTotal`) were already derived from
+  // `floorTerms`, and the document's side now is too — which is the precondition that file names
+  // ("the floor's four parts … have to be moved onto one explicit term space first"). Measured
+  // consequences, both floors: English 16/20 · 19/20 and CJK 11/22 · 15/22, unchanged.
   const results = [];
   for (let i = 0; i < docCount; i++) {
     if (!matched[i]) continue;
-    if (coverage[i] < floor.required) continue;
+    if (floorCoverage[i] < floor.required) continue;
     if (!informative[i]) continue;
     // IDF-weighted coverage: the guard that makes "no lesson matches" reachable for
     // natural language (see RELEVANCE_MIN_COVERAGE).
-    if (matchedIdf[i] / idfTotal < RELEVANCE_MIN_COVERAGE) continue;
+    if (floorMatchedIdf[i] / idfTotal < RELEVANCE_MIN_COVERAGE) continue;
     const doc = docs[i];
 
     // Apply domain filter
@@ -1354,14 +1529,22 @@ function searchLessonsBM25(index, query, domain, top = 5, floorQuery = null) {
       continue;
     }
 
-    results.push({ doc, score: scores[i], userScore: userScores[i] });
+    results.push({ doc, score: scores[i], userScore: userScores[i],
+                    // The share of *this channel's* query terms the document matched. A ratio, not a
+                    // score: it stays inside its own term space, which is what keeps the two channels
+                    // comparable without comparing an IDf from one map with an IDF from another.
+                    covered: queryTerms.length ? coverage[i] / queryTerms.length : 0 });
   }
 
   // The user's own words decide the order; alias expansions only break ties. When the tokenizer
   // cannot see the query at all (Chinese), `floorTerms` *is* the expanded set, so `userScore`
   // equals `score` and this is the previous behaviour exactly — #1780 keeps working.
   results.sort((a, b) => (b.userScore - a.userScore) || (b.score - a.score));
-  return results.slice(0, top).map(({ doc, score }) => ({
+
+  // ── fuse the CJK channel (#2356) ─────────────────────────────────────────────
+  // One list when the channel knows nothing (every Latin query), a real fusion when it does.
+  const ordered = cjkRanked.length ? fuseRankings(results, cjkRanked) : results;
+  return ordered.slice(0, top).map(({ doc, score }) => ({
     id: doc.id || "",
     title: doc.title || "",
     domain: doc.domain || "",
@@ -1510,9 +1693,14 @@ const INDEX_TEXT_MAX_CHARS = 6000;
 // that this constant means "retrieval behaviour changed" — it does not; it means "the
 // rebuild input changed". The word list has its own, separate revision:
 // `QUERY_ALIAS_VERSION`, which moves with data/query-aliases.json and needs no rebuild.
-// (The one change that *would* force this to 4 is indexing CJK, e.g. bigrams in
-// lessonIndexText — not done here; see the design doc.)
-const INDEX_TEXT_VERSION = 3;
+// v4 (2026-09-28): the CJK channel (#2355) — `index.cjk`, a bigram map with its own lengths, built in
+// the same pass from the same `lessonIndexText()`. This *is* the change the paragraph above said would
+// force a bump: the rebuild input gained a field the old build does not have, and a stale build must not
+// be served as if it had it. Without the bump a deployed worker would answer English perfectly while CJK
+// is silently absent — the failure that looks like nothing is wrong. What did *not* change is the English
+// side: `terms`, `docs` and `avgDocLen` are byte-identical to a build without the channel, because the
+// bigrams never enter their map (see `buildBM25Index`).
+const INDEX_TEXT_VERSION = 4;
 // The public listing must not ship the internal searchable body: `indexText` feeds
 // the index and the matcher, and it is dropped from every response the worker
 // builds from loadLessons().
@@ -1572,8 +1760,23 @@ function buildBM25Index(lessons, { k1 = 1.5, b = 0.75, textMode } = {}) {
   const docs = [];
   const lengths = [];
   const termDocs = new Map();
+  // ── the CJK channel (issue #2355) ──────────────────────────────────────────
+  //
+  // Bigrams go into their **own** map with their **own** lengths, and never into `termDocs`. The
+  // reason is `avgDocLen`: BM25 normalises every document's score by it (`b = 0.75`), so a bigram
+  // stream sharing the text would move every English score even though no English token changed —
+  // which is exactly what `workers/relevance-floor-calibration.test.mjs` measures, and this channel
+  // must leave that table byte-identical.
+  //
+  // The text comes from the same `lessonIndexText()` call the English tokens do, so the two channels
+  // cannot describe different documents; the tokenizer is `cjkBigrams()` (#2361), whose own test
+  // asserts it changes nothing for English. Query-side routing is #2356 and deliberately absent here:
+  // this map is written, stored and tested, and nothing reads it yet.
+  const cjkTermDocs = new Map();
+  const cjkLengths = [];
   lessons.forEach((lesson, i) => {
-    const tokens = bm25Tokenize(lessonIndexText(lesson));
+    const text = lessonIndexText(lesson);
+    const tokens = bm25Tokenize(text);
     const len = tokens.length;
     lengths.push(len);
     docs.push({
@@ -1588,6 +1791,15 @@ function buildBM25Index(lessons, { k1 = 1.5, b = 0.75, textMode } = {}) {
     for (const [term, count] of tf) {
       if (!termDocs.has(term)) termDocs.set(term, []);
       termDocs.get(term).push({ doc: i, tf: count, len });
+    }
+    const grams = cjkBigrams(text);
+    cjkLengths.push(grams.length);
+    for (const gram of grams) {
+      if (!cjkTermDocs.has(gram)) cjkTermDocs.set(gram, []);
+      // `tf` is 1 by construction: `cjkBigrams` returns a Set, so a pair repeated inside one document
+      // is one entry. The field is kept so the posting shape matches `index.terms` exactly, which is
+      // what lets #2356 reuse the existing scorer without a second format.
+      cjkTermDocs.get(gram).push({ doc: i, tf: 1, len: grams.length });
     }
   });
 
@@ -1605,6 +1817,30 @@ function buildBM25Index(lessons, { k1 = 1.5, b = 0.75, textMode } = {}) {
       docs: entries,
     };
   }
+  // The CJK channel: same shape as `terms`, its own IDF and its own length normaliser. `docLen` is the
+  // per-document bigram count for every document in order (0 for a document with no CJK), and
+  // `avgDocLen` is the normaliser a BM25 pass over this map needs — included here rather than left to
+  // #2356 so that adding the channel costs exactly one rebuild and one version bump.
+  const cjkTerms = {};
+  for (const [gram, entries] of cjkTermDocs) {
+    const df = entries.length;
+    cjkTerms[gram] = {
+      df,
+      idf: Math.round(Math.log((docCount - df + 0.5) / (df + 0.5) + 1) * 10000) / 10000,
+      docs: entries,
+    };
+  }
+  const cjkDocCount = docCount;
+  const cjkAvgDocLen = cjkDocCount
+    ? Math.round((cjkLengths.reduce((sum, n) => sum + n, 0) / cjkDocCount) * 10) / 10
+    : 0;
+  const cjk = {
+    version: 1,
+    docCount: cjkDocCount,
+    avgDocLen: cjkAvgDocLen,
+    docLen: cjkLengths,
+    terms: cjkTerms,
+  };
   return {
     version: 1,
     built_at: new Date().toISOString(),
@@ -1615,6 +1851,7 @@ function buildBM25Index(lessons, { k1 = 1.5, b = 0.75, textMode } = {}) {
     textMode: textMode || detectTextMode(lessons),
     textVersion: INDEX_TEXT_VERSION,
     terms,
+    cjk,
     docs,
   };
 }
