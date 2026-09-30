@@ -185,14 +185,23 @@ the **hosted** endpoint exposes, not a local server.
 
 | Form | What it installs | MCP tools you get | Needs |
 |---|---|---|---|
-| `dsh plugin add misakanet` (**npm**) | `SKILL.md`, `index.js` (wires the MCP row), `cordis.patch.yml` | the **hosted** endpoint's tools at `https://misakanet.org/mcp` — **7**, and `misakanet_me_events` is one of them | network. **No Python, no local process** |
-| `dsh plugin add github:Ikalus1988/MisakaNet` (**git+**) | the above **plus the repository**, including `scripts/mcp_server.py` | the **local stdio** server — **9** tools, and it does **not** have `misakanet_me_events` | **Python ≥ 3.10** and a checkout |
+| `dsh plugin add misakanet` (**npm**) | `SKILL.md`, `index.js` (wires the MCP row), `cordis.patch.yml` | the **hosted** endpoint's tools at `https://misakanet.org/mcp` — **7**, declared in `.codex-plugin/plugin.json` (`mcp.tools`); `misakanet_me_events` is one of them | network. **No Python, no local process** |
+| `dsh plugin add github:Ikalus1988/MisakaNet` (**git+**) | the above **plus the repository**, including `scripts/mcp_server.py` | the **local stdio** server (`python3 scripts/mcp_server.py`) — **10**: the same 7 hosted tools **plus** the 3 that only make sense on your machine, `misakanet_submit_usage`, `misakanet_usage_status`, `misakanet_memory_context` | **Python ≥ 3.10** and a checkout |
 | `cp -r skills/misakanet ~/.dsh/skills/` (**manual skill**) | the skill only | none until you wire an MCP row yourself | — |
 
 Why: the npm bundle deliberately has **no `bin`** and does not ship the local server — `scripts/mcp_server.py`
 "only exists in repo/git+ checkouts", so the npm row points at the public Streamable HTTP endpoint instead of
 a process that would be missing (`index.js`, and the same reasoning in `cordis.patch.yml`). If you want a
 local server, install with git+.
+
+The two surfaces differ in **one direction only** (fixed 2026-09-30, intakes #2000 / #2486): every tool the
+hosted endpoint serves is also served locally, and the local server adds the three tools that read *your*
+checkout (its usage meter and its `lessons/` corpus) — which a hosted endpoint has nothing to answer. Before
+that, `misakanet_me_events` was hosted-only, so the skill's own reuse-evidence step failed on a local install;
+the local server now **proxies** it to the hosted service instead (it needs the network, and answers
+`hosted_endpoint_unavailable` rather than pretending there is no evidence when it cannot reach it).
+`.codex-plugin/plugin.json` carries both sets under `mcp.tools` / `mcp.local.tools`, and
+`tests/test_mcp_capability_parity.py` checks those lists against the server and the worker.
 
 ## What "verified" means here — two different checks
 
@@ -206,16 +215,16 @@ An install page can show two green things and they are not the same claim:
 A green static check with a broken install is possible, and a green install with a stale listing is possible.
 Verify with the second row; the first row is about the catalogue.
 
-## Prerequisites, and what "zero dependency" does and does not mean
+## Prerequisites, and what "stdlib-only" does and does not mean
 
 * **Hosted MCP path** (the npm form): no local runtime at all — it is an HTTPS call.
 * **Local paths** — the library (`misakanet-core`), the stdio server (`python3 scripts/mcp_server.py`), the
   CLI and `search_knowledge.py` — need **Python ≥ 3.10**.
-* **"Zero dependency" means no third-party packages**, not "nothing to prepare": the default search path is
-  pure Python stdlib, which is why it runs anywhere a Python interpreter exists. Two things sit outside that
-  claim: the **interpreter itself** is a hard prerequisite, and the optional `--semantic` path needs
-  `sentence-transformers` (or an external embedding service) — see `docs/LIMITATIONS.md` and
-  `docs/cli-reference.md`.
+* **"Stdlib-only" means no third-party packages**, not "nothing to prepare": the default search path is pure
+  Python standard library, which is why it runs anywhere a Python interpreter exists. Two things sit outside
+  that claim: the **interpreter itself** is a hard prerequisite (**Python ≥ 3.10**), and the optional
+  `--semantic` path needs `sentence-transformers` (or an external embedding service) — see
+  `docs/LIMITATIONS.md` and `docs/cli-reference.md`.
 
 ## Which version number is which
 
