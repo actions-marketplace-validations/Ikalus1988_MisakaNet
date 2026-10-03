@@ -79,6 +79,7 @@ TOPICS_DIR = Path("docs") / "topics"
 TOPICS_INDEX = TOPICS_DIR / "index.html"
 SITEMAP = Path("docs") / "sitemap.xml"
 MANIFEST = Path("docs") / ".generated-pages.json"
+REDIRECTS = Path("docs") / "_redirects"
 SITE_URL = "https://misakanet.org"
 
 # Prune guard: a directory is only deleted if its page carries this marker, so a
@@ -243,13 +244,45 @@ def build_lesson_page(lesson: dict) -> str:
     slug = lesson.get("_slug", slugify(title))
     canonical = f"{SITE_URL}/lessons/{slug}/"
 
+    # Non-published lessons are served and indexed (the MCP side already decided that in #2423,
+    # which makes `status` visible on every hit so a caller can filter). The page template was the
+    # half that never got the same treatment: a draft lesson renders with an identical <title> and
+    # <h1> to a published one, so a reader — or a crawler building a snippet — cannot tell it is
+    # unfinished. Measured 2026-10-04 against production: `/lessons/fanuc-alarm-code-reference/`
+    # (a draft) contained zero occurrences of "draft" or "unpublished", while the MCP response for
+    # the same lesson carried `status: "draft"`.
+    #
+    # This does not change whether drafts are published or indexed — that is a product decision and
+    # out of scope here. It makes the state visible to whoever lands on the page, which is the same
+    # rule the API already follows.
+    status = (lesson.get("status") or "published").strip().lower()
+    is_published = status == "published"
+
     description = f"{summary[:150]}..." if len(summary) > 150 else summary
     if not description:
         # "indexed", not "verified": docs/trust-semantics.md reserves "verified"
         # for lessons fact-checked against source material.
         description = f"Indexed failure lesson: {title}. From MisakaNet — Git-backed failure lesson network."
+    if not is_published:
+        # A search snippet built from the description is exactly where an unfinished lesson is most
+        # likely to be mistaken for a settled one, so the state has to survive into the meta tag too.
+        description = f"Draft (not published): {description}"
 
     tags_html = "".join(f'<span class="tag">{t}</span>' for t in tags[:6])
+
+    banner_html = "" if is_published else (
+        # Styled inline rather than via the shared <style> block on purpose. A rule in the template
+        # would regenerate all 464 lesson pages for a change that only concerns 30 of them, and a
+        # 464-file diff makes a one-line feature unreviewable. Inline keeps the diff to exactly the
+        # pages that changed meaning.
+        '<div class="draft-banner" role="note" style="border:1px solid rgba(210,153,34,0.5);'
+        "background:rgba(210,153,34,0.12);color:#e3b341;border-radius:6px;padding:10px 14px;"
+        'margin-bottom:20px;font-size:13px;line-height:1.5;">'
+        f"<strong>Draft — not published.</strong> "
+        f"This lesson is <code style=\"background:rgba(210,153,34,0.15);padding:1px 5px;"
+        f'border-radius:3px;">{status}</code> and may be incomplete or wrong. '
+        f'The MCP API returns it with <code>status: "{status}"</code> so callers can filter it.</div>'
+    )
 
     # Evidence level (#786) — how well this lesson is backed, not how well written.
     evidence = describe(lesson.get("evidence_level"))
@@ -265,6 +298,11 @@ def build_lesson_page(lesson: dict) -> str:
   <h2>Summary</h2>
   <p>{summary or 'See source for full details.'}</p>
 </div>"""
+
+    if banner_html:
+        # Prepended rather than interpolated into the f-string below: an empty `{banner_html}` still
+        # emits its newline, which put a blank line after <body> on all 434 published pages.
+        body = banner_html + "\n" + body
 
     if source_url:
         body += f'\n<div class="section"><h2>Source</h2><p><a href="{source_url}">View on GitHub →</a></p></div>'
@@ -328,11 +366,17 @@ def generate_sitemap(lesson_slugs: list, domains: list) -> str:
     lines = ['<?xml version="1.0" encoding="UTF-8"?>',
              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
 
-    # Static pages
+    # Static pages.
+    # The path shape has to match how each one is actually served, and the two differ in this repo:
+    # `/search/` is a directory (`docs/search/index.html`), while `docs/troubleshooting.md` is a
+    # markdown file served verbatim at `/troubleshooting.md` — the same as `docs/agents/repo-operations.md`.
+    # Advertising the directory form of the `.md` page gave a 404 that no check caught: measured
+    # 2026-10-04, `https://misakanet.org/troubleshooting/` → 404 while `/troubleshooting.md` → 200.
+    # `tests/test_sitemap_urls_resolve.py` now asserts each entry maps to a real file.
     static = [
         ("https://misakanet.org/", "weekly", "1.0"),
         ("https://misakanet.org/search/", "weekly", "0.9"),
-        ("https://misakanet.org/troubleshooting/", "weekly", "0.8"),
+        ("https://misakanet.org/troubleshooting.md", "weekly", "0.8"),
     ]
     for url, freq, prio in static:
         lines.append(f"  <url><loc>{url}</loc><changefreq>{freq}</changefreq><priority>{prio}</priority></url>")
@@ -388,48 +432,78 @@ def topic_plan(lessons: list) -> dict[str, tuple[str, int]]:
     return pages
 
 
-def build_id_alias_page(lesson_id: str, slug: str) -> str:
-    """A tiny redirect page at `/lessons/<id>/` for a lesson whose page slug differs from its id.
 
-    Why this exists (2026-09-29): `misakanet_search` returns the frontmatter `id`, `docs/llms.txt` tells
-    readers that static pages live at `https://misakanet.org/lessons/<slug>/`, and the page slug is
-    **title-derived** (`slugify(title)`, sticky across renames only through the manifest). Measured on the
-    live site: **73 of 426 lessons** have an id that is not their slug, so `curl /lessons/<id>/` answered
-    **404** for 17% of the corpus while the page existed under another name — the documented mapping
-    between a search hit and its page simply did not hold.
 
-    Two ways to close that: publish a canonical URL in the API (needs the slug in D1, i.e. a second
-    implementation of `slugify` in JavaScript — the drift this repository keeps paying for), or make the id
-    resolve. This is the second one: static, generated from the *same* slug map the pages use, no runtime
-    cost, no API contract change, and it makes the documented pattern true under either reading of
-    "slug". `rel="canonical"` keeps search engines pointed at the real page, which is also why the alias is
-    deliberately absent from the sitemap.
+def build_redirects_file(rules: list[tuple[str, str]]) -> str:
+    """`docs/_redirects` — the id -> slug table as a platform redirect table instead of 111 stub pages.
+
+    Platform support (2026-10-04, verified before the stub pages were retired): the site is a Cloudflare
+    **Workers Static Assets** Worker, not Pages — `wrangler.jsonc` (`misakanet-web`) names `docs/` as
+    `assets.directory` and no `main`, so no Worker code runs on these paths. That matters because the
+    documented rule is that `_redirects` is *not* applied to requests served by Worker code; with no
+    script there is nothing to be skipped. Confirmed from the inside rather than assumed: `docs/_headers`
+    sits in the same directory through the same parser, and all five of its rules are present verbatim in
+    the live response for `/` and `/lessons/<slug>/` (measured 2026-10-04). The documented limits are 2,000
+    static redirects and a 1,000-character line; 111 rules is 5% of the first and the longest line here is
+    far under the second.
+
+    **301, not the 302 default.** A slug is sticky — `plan_with_slugs` keeps a lesson on the URL it already
+    has — so `/lessons/<id>/` is a permanent address and 301 is the truthful status. It is also the one the
+    old stub could not express: a `<meta http-equiv="refresh">` is invisible to every client that is not a
+    browser. `curl`, an MCP agent resolving a `misakanet_search` hit, a feed reader and a link checker all
+    saw a 200 with a small HTML body, which is why the GitHub Pages side of this repository could read the
+    alias as "a real page exists here" and why the secret-scanner alerts (recorded above) kept firing on the
+    slug text inside those bodies.
+
+    The source keeps its trailing slash because that is the URL the stub served: static assets default to
+    `html_handling: auto-trailing-slash`, and `/lessons/<id>` (no slash) is a different request from
+    `/lessons/<id>/`. Rules are sorted so the file is byte-stable across runs — an unsorted table would make
+    every corpus reshuffle a spurious diff.
+
+    **Targets are written as literal UTF-8, never percent-encoded, and that is deliberate.** Three rules
+    redirect to a Chinese slug (`fanuc-ls-程序解析段标记必须行首锚定否则注释会截断程序体` and two others,
+    all three verified 200 on the live site 2026-10-04). A `Location` header must be an ASCII URI per
+    RFC 7231, so pre-encoding looks tidy — but the file is a UTF-8 *text* file that the platform parses,
+    so a pre-encoded `%E7%A8%8B...` may be taken as already-encoded and emitted as `%25E7%25A8%25...`,
+    which is a broken link that still looks well-formed in review. Emitting the character and letting the
+    platform encode is the direction that cannot double-encode. It is the one behaviour here measured
+    against production rather than assumed: the 301s ship first with the stub pages still in place, so a
+    wrong `Location` shows up as a live probe before anything is deleted.
     """
-    target = f"/lessons/{slug}/"
-    # The canonical is **site-relative** on purpose (2026-09-29). `rel="canonical"` resolves a relative URL
-    # against the page, so the origin is not needed here, and a generated file whose only content is a
-    # redirect should not carry one.
-    #
-    # **Correction (2026-09-30).** The original comment claimed the absolute URL was what tripped GitHub's
-    # secret-scanning heuristic on two alias pages (`HARDCODED_SECRET`, plugin-scanner 2.2.0). That was
-    # wrong: after this file switched to a relative canonical the same two pages were flagged again at the
-    # same line, so the match is the **slug text** — "Idempotent task claim **keys** for snipers", "Disk full
-    # from agent tmp dirs — **GC pattern**" — which is a public URL built from a lesson title, not a
-    # credential. `scripts/check_published_secrets.py` is green over all 739 published prose files and
-    # neither lesson source contains credential-shaped material, so those alerts are false positives and are
-    # disposed of as such. Removing the HTML entirely (one `docs/_redirects` table instead of 73 redirect
-    # pages) is the structural alternative, tracked separately because it needs the platform's redirect
-    # support verified on a probe path *before* the alias pages are deleted.
-    return (
-        '<!doctype html>\n<html lang="en">\n<head>\n'
-        '<meta charset="utf-8">\n'
-        f'<title>Moved — {lesson_id}</title>\n'
-        f'<link rel="canonical" href="{target}">\n'
-        f'<meta http-equiv="refresh" content="0; url={target}">\n'
-        '</head>\n<body>\n'
-        f'<p>{GENERATOR_MARK} — this lesson lives at <a href="{target}">{target}</a>.</p>\n'
-        '</body>\n</html>\n'
-    )
+    lines = [
+        "# Generated by scripts/build_lesson_pages.py — do not edit by hand.",
+        "# `/lessons/<id>/` -> `/lessons/<slug>/` for every lesson whose id is not its page slug.",
+        f"# {len(rules)} rules. Cloudflare Workers Static Assets `_redirects`; see build_redirects_file().",
+    ]
+    lines += [f"/lessons/{lesson_id}/ /lessons/{slug}/ 301" for lesson_id, slug in sorted(rules)]
+    return "\n".join(lines) + "\n"
+
+
+def read_redirect_sources(root: Path = REPO) -> dict[str, str]:
+    """`{source path: target path}` from the committed `docs/_redirects`, comments and blanks dropped.
+
+    Tolerant by design: an unreadable or absent file is an empty table, not an exception, because every
+    caller treats "no rule" as "not resolved" and reports it against the lesson it belongs to. A crash
+    here would instead abort a `--check` run with a traceback and say nothing about which lesson is
+    unreachable, which is the outcome this function exists to prevent.
+
+    Deliberately unanchored on the right of the target and untyped on the code: this is a reader, not a
+    validator. `tests/test_lesson_id_redirects.py` is where the table's shape is pinned, and duplicating
+    those rules here would be a second place for them to be wrong.
+    """
+    try:
+        text = (root / REDIRECTS).read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    table: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        parts = stripped.split()
+        if len(parts) >= 2:
+            table[parts[0]] = parts[1]
+    return table
 
 
 def plan_with_slugs(lessons: list, known_slugs: dict[str, str] | None = None
@@ -486,17 +560,29 @@ def plan_with_slugs(lessons: list, known_slugs: dict[str, str] | None = None
     # Every id resolves too, so `/lessons/<id>/` (what a search hit hands a consumer) is not a 404 for the
     # 73 lessons whose slug is title-derived. A real page always wins: if an id happens to equal another
     # lesson's slug, the alias is dropped rather than overwriting it.
+    #
+    # 2026-10-04: this used to also write a stub HTML page per alias, and shipped alongside the
+    # `_redirects` table for one release while the 301s were being observed. The table is now the only
+    # publisher, so the stubs are pruned. Verified live before retiring them (misakanet.org, 2026-10-04):
+    # `/lessons/<id>/` answers `301` with a `Location` to the slug page, and the three rules with a
+    # Chinese target percent-encode correctly rather than double-encoding.
     aliases = 0
+    alias_rules: list[tuple[str, str]] = []
     for lesson in lessons:
         lesson_id = str(lesson.get("id") or "")
         slug = assigned.get(lesson_id)
         if not lesson_id or not slug or lesson_id == slug:
             continue
-        path = f"docs/lessons/{lesson_id}/index.html"
-        if path in files:
+        if f"docs/lessons/{lesson_id}/index.html" in files:
             continue
-        files[path] = build_id_alias_page(lesson_id, slug)
+        alias_rules.append((lesson_id, slug))
         aliases += 1
+    # Unconditional on purpose. The prune guard only deletes a file that carries GENERATOR_MARK, and a
+    # `_redirects` table has no reason to carry it, so a table that stopped being emitted would sit on
+    # disk forever, stale and still live, rather than being cleaned up with the rest of the output.
+    # Always emitting it keeps the path in `files` (and so in the manifest) on every run. A comments-only
+    # table is valid — Cloudflare ignores `#` lines — so the zero-alias case costs nothing but a header.
+    files[REDIRECTS.as_posix()] = build_redirects_file(alias_rules)
     for slug, (html, _count) in topics.items():
         files[f"docs/topics/{slug}/index.html"] = html
     files["docs/topics/index.html"] = build_topics_index(index_entries, len(lessons))
@@ -658,6 +744,11 @@ def corpus_page_problems(lessons: list, *, root: Path = REPO) -> list[str]:
         return [f"{MANIFEST.as_posix()} carries no lesson-id -> slug map, so no lesson's page URL "
                 f"is knowable — run `python3 scripts/build_lesson_pages.py` to record it"]
 
+    # Which id the table redirects, read from the committed `docs/_redirects` rather than recomputed.
+    # Recomputing it here would be a second implementation of the alias rule, and the two drifting is
+    # how a lesson ends up "resolved" by this check and 404ing in production.
+    redirect_sources = read_redirect_sources(root)
+
     problems: list[str] = []
     for lesson in lessons:
         lesson_id = lesson.get("id") or ""
@@ -671,14 +762,30 @@ def corpus_page_problems(lessons: list, *, root: Path = REPO) -> list[str]:
         slug = slugs.get(lesson_id) or None
         alias_page = LESSONS_DIR / lesson_id / "index.html"
         if slug is not None:
-            candidates = [LESSONS_DIR / slug / "index.html", alias_page]
+            candidates = [LESSONS_DIR / slug / "index.html"]
+            if lesson_id != slug:
+                candidates.append(alias_page)
             # Deliberately NOT the title-derived URL: when a slug is on record, a page at another
             # URL does not make the live one reachable.
             if any((root / candidate).is_file() for candidate in candidates):
                 continue
+            # 2026-10-04: the alias page is retired, so `/lessons/<id>/` resolves through the
+            # `_redirects` table instead. Accepted only when the table actually carries this id *and*
+            # points it at the recorded slug — a rule pointing somewhere else does not resolve this
+            # lesson, it sends a reader to a different one.
+            target = redirect_sources.get(f"/lessons/{lesson_id}/")
+            if target == f"/lessons/{slug}/":
+                continue
+            if target is not None:
+                problems.append(
+                    f"lesson {lesson_id!r}: {REDIRECTS.as_posix()} sends /lessons/{lesson_id}/ to "
+                    f"{target}, but its recorded slug is /lessons/{slug}/ — the id resolves to the "
+                    f"wrong lesson")
+                continue
             problems.append(
                 f"lesson {lesson_id!r}: no page on disk — looked for "
-                + " and ".join(candidate.as_posix() for candidate in candidates))
+                + " and ".join(candidate.as_posix() for candidate in candidates)
+                + f", and {REDIRECTS.as_posix()} carries no rule for /lessons/{lesson_id}/")
             continue
         # No recorded slug: the manifest is behind the corpus (a lesson new to the index, or a
         # hand-trimmed manifest). Say which of the two it is; both are failures, for the reason
