@@ -11,16 +11,18 @@
 > 许多 workflow 是机器人/数据管道，失败常在外部依赖（D1、registry、配额）。
 
 
-## 质量门禁（23）
+## 质量门禁（25）
 
 | workflow | 用途 | 触发 | 定时 |
 |---|---|---|---|
 | `auto-merge-docs.yml` | Auto-Merge Docs PRs | PR |  |
 | `auto-merge-lessons.yml` | Auto-Merge Lessons（`auto-merge-lesson` opt-in 标签）| PR |  |
 | `bounty-claim-guard.yml` | Bounty Claim Guard | PR（opened/edited）|  |
+| `check-documented-gates.yml` | Documented Gates Ratchet（比对 `docs/ci-gates.md` 的门禁表与规则集 23826057 的真实集合，不一致则开 issue）| 定时, 手动 | `11 7 * * 1` |
 | `ci-cross-platform.yml` | Cross-Platform Tests | PR, 手动 |  |
 | `codeql.yml` | CodeQL | PR, push, 定时 | `0 6 * * 0` |
 | `dco-check.yml` | DCO Check | PR, 手动 |  |
+| `external-asset-integrity.yml` | External Asset Integrity | 定时, 手动 | `23 7 * * 3` —— 重算 CDN 实际下发的字节，和 `data/external_assets.json` 里钉的 sha384 对比。离线的另一半在 `tests/test_external_asset_integrity.py`（每个 PR 跑）：markup 与清单必须一致、且不允许存在清单外的外部脚本。见 #2683 |
 | `dsh-client-e2e.yml` | DSH Client E2E（真宿主 + Chromium：`/misakanet` 浮层、全窗口 toast、设置行↔面板三条行为场景；库请求被拦截，不依赖公网。**2026-10-02 起跑 PR**：composer 起不来的根因是 seed 的 workspace 记录缺 `createdAt`/`updatedAt`，宿主会自己建首条会话）| PR, 手动, 定时 | `40 3 * * *` |
 | `field-report-schema.yml` | Field Report Schema | PR, push, 手动 |  |
 | `fix-dco.yml` | DCO Auto-Fix | 评论 |  |
@@ -39,13 +41,14 @@
 | `approval-watch.yml` | Approval Watch | 定时, 手动 | `17,47 * * * *` —— 列出 `status: waiting` 的 run，维护一个跟踪 issue；**永不审批**（`tests/test_approval_watch.py` 断言它不含任何审批调用） |
 | `shadow-branch.yml` | Shadow Branch - External Agent Isolation | PR |  |
 
-## 数据/索引（22）
+## 数据/索引（23）
 
 | workflow | 用途 | 触发 | 定时 |
 |---|---|---|---|
 | `auto-draft.yml` | Auto-Draft from Crash Tombstone | 手动 |  |
 | `auto-sync-prs.yml` | Auto-Sync PR Branches | 定时（6 小时）, 手动 | 每次 main push 就同步会把每个开着的 PR 推一次新 head：整个矩阵重跑 + 可合并性重置（详见 `docs/maintainer/branch-sync-and-ci.md`） |
 | `benchmark-workers-ai.yml` | Workers AI Lesson Benchmark (weekly) | 定时, 手动 | `0 2 * * 1` |
+| `dependency-vuln-audit.yml` | Dependency Vulnerability Audit（`pr-checks.yml` 的依赖审计**只在 PR 改了 manifest 时**跑，回答的是「这个 PR 有没有引入坏依赖」；新 CVE 针对已在树里的版本公布时，没有任何 PR 动 manifest，于是没有任何东西变红。这条每周定时补上另一半问题。另见 `data/README.md` 一类的"登记"惯例：它 find-or-update 一个 `dependency-vuln-audit` 摘要议题，不改 manifest、不开 PR；`requirements.txt` 是下界约束且无 lockfile，所以 PyPI 那一半审计的是**此刻解析到的版本**而非钉住的集合）| 定时, 手动 | `41 5 * * 2` |
 | `build-feed.yml` | Build Live Feed（并写 `docs/data/activity.json`：首页活动面板的**兜底**快照，由 `scripts/sync_site_activity.py` 生成。面板首选 `/api/activity`——同一批计数器的匿名边缘缓存投影，TTL 分钟级（2026-09-29 加）；三小时快照只在它不可达时兜底。起因：2026-09-29 实测首页显示 `total 5974` 而同日端点报 6645，日期相同、页面看不出陈旧；当年 17.4 秒冷路径理由是重测为 1.08–1.28 秒）| push, 定时, 手动 | `23 */3 * * *` |
 | `example-capture.yml` | Example Capture (not active) | 手动 |  |
 | `intake-auto-review.yml` | Intake Auto Review | issues, 手动 |  |
