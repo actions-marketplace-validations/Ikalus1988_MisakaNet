@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""The `status` vocabulary is declared in several places, and they have drifted.
+
+`scripts/lesson_gate.py` is the enforcer: `VALID_STATUS` is the set of values a lesson
+may carry. Everything else — the writer's `--status` choices, the gate's own docstring,
+`docs/trust-semantics.md`, `lessons/TEMPLATE.md` — is supposed to *restate* that set for
+a human reader or a shell user. Restatements are exactly what rots, and it rotted here:
+
+    $ python3 scripts/queue_lesson.py --status deprecated ...
+    $ python3 scripts/lesson_gate.py <the file it just wrote>
+    FAIL  - status must be one of ['active', 'archived', 'draft', 'published',
+           'stale', 'superseded'], got 'deprecated'
+
+The writer exited 0 and the gate exited 1. `deprecated` was only ever in the writer's
+`choices=[...]` list; it has never been in `VALID_STATUS`, and no lesson in the corpus
+carries it. A contributor who used the CLI exactly as its own `--help` described got a
+file the repo's quality gate rejected.
+
+The writer now derives its choices from `VALID_STATUS`, so that half cannot drift. These
+tests pin the remaining three restatements, and — more importantly — assert the *direction*
+that matters: anything the writer accepts, the gate accepts.
+"""
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts"))
+
+from lesson_gate import VALID_STATUS  # noqa: E402
+
+QUEUE_LESSON = REPO / "scripts" / "queue_lesson.py"
+GATE = REPO / "scripts" / "lesson_gate.py"
+TRUST_SEMANTICS = REPO / "docs" / "trust-semantics.md"
+TEMPLATE = REPO / "lessons" / "TEMPLATE.md"
+
+# The value the writer used to advertise and the gate never accepted. Named explicitly so
+# that removing it from the writer produces a test that says *why*, not just a set diff.
+RETIRED_WRITER_CHOICE = "deprecated"
+
+# Every status vocabulary that exists in this repo, minus the gate's. If the writer ever
+# grows one of these it is offering a value `lesson_gate.py` rejects. Assembled from
+# `clean_pipeline.py`, `bulk_import_lessons.py`, `contribution_queue.py` and
+# `test_draft_lesson_pages_marked.py` — each is a real string some tool in this repo uses,
+# which is exactly how `deprecated` got into the writer's list in the first place.
+NEAR_MISS_STATUSES = {
+    "deprecated", "rejected", "needs_review", "review",
+    "verified", "retired", "pending", "accepted", "duplicate", "converted",
+}
+
+# argparse exits 2 when it rejects a value, and the writer's own "needs --title or --file"
+# complaint exits 1. So the exit code alone answers "did argparse accept this?" without
+# having to read its error text — an earlier version of this file parsed the
+# "invalid choice: ... (choose from 'a', 'b')" message, and that message's formatting is
+# not stable enough to test against (it did not survive CI's 3.12 runner).
+_ARGPARSE_REJECTED = 2
+
+
+def _writer_accepts(status: str) -> bool:
+    """Whether the writer's real CLI lets `--status status` through argparse."""
+    probe = subprocess.run(
+        [sys.executable, str(QUEUE_LESSON), "--status", status],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        cwd=REPO,
+    )
+    assert probe.returncode in (1, _ARGPARSE_REJECTED), (
+        f"--status {status!r} exited {probe.returncode}, which is neither argparse's "
+        f"rejection (2) nor the writer's own complaint (1). stderr:\n{probe.stderr}"
+    )
+    return probe.returncode != _ARGPARSE_REJECTED
+
+
+def test_the_writer_accepts_every_status_the_gate_accepts() -> None:
+    """The invariant that was violated, checked in the direction that can fail.
+
+    Before the fix the writer's choices were a different, smaller set that included a
+    value the gate rejects. Anything the gate calls valid must be writable; otherwise a
+    contributor cannot produce a lesson the gate will pass.
+    """
+    refused = sorted(v for v in VALID_STATUS if not _writer_accepts(v))
+    assert not refused, (
+        f"the writer refuses to write {refused}, but lesson_gate.VALID_STATUS accepts "
+        f"them. A contributor cannot author a lesson the gate would pass."
+    )
+
+
+def test_the_writer_rejects_every_status_the_gate_rejects() -> None:
+    """And in the other direction: nothing the writer offers may be refused by the gate.
+
+    This is the half that was actually broken. `NEAR_MISS_STATUSES` is every status-like
+    value any other tool in this repo uses, so the writer growing one of them is caught
+    here rather than in a contributor's failed `lesson_gate.py` run.
+    """
+    wrongly_accepted = sorted(v for v in NEAR_MISS_STATUSES if v in VALID_STATUS)
+    assert not wrongly_accepted, (
+        f"{wrongly_accepted} are now in VALID_STATUS, so this test's premise is stale: "
+        "move them out of NEAR_MISS_STATUSES or drop this test."
+    )
+    offered = sorted(v for v in NEAR_MISS_STATUSES if _writer_accepts(v))
+    assert not offered, (
+        f"the writer accepts {offered}, none of which lesson_gate.VALID_STATUS allows. "
+        "Each of these would produce a file the quality gate refuses."
+    )
+
+
+def test_the_writer_no_longer_advertises_a_status_the_gate_rejects() -> None:
+    """Named regression: the exact value from the original report."""
+    assert not _writer_accepts(RETIRED_WRITER_CHOICE), (
+        f"--status {RETIRED_WRITER_CHOICE} parses successfully. The writer would then "
+        "emit a lesson that lesson_gate.py rejects."
+    )
+    assert RETIRED_WRITER_CHOICE in NEAR_MISS_STATUSES, (
+        f"{RETIRED_WRITER_CHOICE} was dropped from NEAR_MISS_STATUSES; this test's "
+        "premise is now carried only by the set comparison above."
+    )
+
+
+def test_the_gate_rejects_what_the_writers_own_help_text_used_to_promise() -> None:
+    """The other half of the round trip, asserted on the gate rather than on argparse.
+
+    Directly re-derives the failure from the report, so if the writer is ever made to
+    accept a value again, the failure mode is named in a test instead of in a bug report.
+    """
+    sys.path.insert(0, str(REPO / "scripts"))
+    import lesson_gate  # noqa: PLC0415
+
+    verdict = lesson_gate.validate_status(RETIRED_WRITER_CHOICE)
+    assert verdict, f"the gate would accept {RETIRED_WRITER_CHOICE!r}: {verdict or 'accepted'}"
+
+
+def test_the_gate_docstring_lists_the_accepted_statuses() -> None:
+    """`lesson_gate.py`'s own docstring contradicted `VALID_STATUS` 26 lines below it."""
+    docstring = GATE.read_text(encoding="utf-8").split('"""', 2)[1]
+    line = next(ln for ln in docstring.splitlines() if "status ∈" in ln)
+    listed = set(re.findall(r"\{([^}]*)\}", line)[0].replace(" ", "").split(","))
+    assert listed == VALID_STATUS, (
+        f"the gate's docstring says {sorted(listed)} but VALID_STATUS is {sorted(VALID_STATUS)}. "
+        "Update the docstring and VALID_STATUS together — tests/test_lesson_status_vocabulary.py "
+        "fails if only one moves."
+    )
+
+
+def test_trust_semantics_documents_the_statuses_the_gate_enforces() -> None:
+    """`docs/trust-semantics.md` advertised `deprecated`, which the gate rejects outright."""
+    line = next(
+        ln for ln in TRUST_SEMANTICS.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("- **Lesson frontmatter**")
+    )
+    head = line.split(". ", 1)[0]
+    listed = set(re.findall(r"`([^`]+)`", head)) - {"status"}
+    assert listed == VALID_STATUS, (
+        f"docs/trust-semantics.md tells contributors to use {sorted(listed)} but the gate "
+        f"enforces {sorted(VALID_STATUS)}. A contributor following the doc writes a lesson "
+        "the quality gate refuses."
+    )
+
+
+def test_the_contributor_template_lists_the_statuses_the_gate_enforces() -> None:
+    """`lessons/TEMPLATE.md` is what a new contributor copies; it must not over-promise."""
+    line = next(
+        ln for ln in TEMPLATE.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("status:") and "REQUIRED" in ln
+    )
+    listed = {part.strip() for part in line.split("REQUIRED", 1)[1].lstrip(" —").split("|")}
+    assert listed == VALID_STATUS, (
+        f"lessons/TEMPLATE.md offers {sorted(listed)} but the gate enforces {sorted(VALID_STATUS)}."
+    )
