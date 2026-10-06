@@ -7,6 +7,58 @@ All notable changes to the Misaka Network project are documented here.
 
 ---
 
+## [2.42.2](https://github.com/Ikalus1988/MisakaNet/compare/v2.42.1...v2.42.2) (2026-10-06)
+
+
+### Bug Fixes
+
+* **deps:** bump sharp override to 0.35.5 — librsvg CVE-2026-96889 ([#2927](https://github.com/Ikalus1988/MisakaNet/issues/2927)) ([9862421](https://github.com/Ikalus1988/MisakaNet/commit/9862421946ccb535d0ca58a57469a2283e8f5974))
+* **integrations:** render the lesson's domain, not a field that does not exist ([#2931](https://github.com/Ikalus1988/MisakaNet/issues/2931)) ([4ad283b](https://github.com/Ikalus1988/MisakaNet/commit/4ad283b732ada65cdeeb55382024c8dd4800cb31))
+* **release:** keep package-lock.json on the release line ([#2929](https://github.com/Ikalus1988/MisakaNet/issues/2929)) ([e807096](https://github.com/Ikalus1988/MisakaNet/commit/e807096ca9b3e9d587337c3a25c9a9229b842a94))
+
+## [2.42.1](https://github.com/Ikalus1988/MisakaNet/compare/v2.42.0...v2.42.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* **site,ci:** three verified intake defects from [#2915](https://github.com/Ikalus1988/MisakaNet/issues/2915)-[#2918](https://github.com/Ikalus1988/MisakaNet/issues/2918) ([#2915](https://github.com/Ikalus1988/MisakaNet/issues/2915) is not ours) ([#2920](https://github.com/Ikalus1988/MisakaNet/issues/2920)) ([f64dddc](https://github.com/Ikalus1988/MisakaNet/commit/f64dddce5ecada997e8cb50d9385ba176c39eb35))
+* **test:** the CSP gate read 0/532 on Windows and 521/532 on Linux ([#2919](https://github.com/Ikalus1988/MisakaNet/issues/2919)) ([9c53a16](https://github.com/Ikalus1988/MisakaNet/commit/9c53a16a70f95e6d10bc95c5765e5ea1c521c46e)), closes [#2914](https://github.com/Ikalus1988/MisakaNet/issues/2914)
+
+
+### Documentation
+
+* stop denying the reward banner the automation attaches to every issue ([#2912](https://github.com/Ikalus1988/MisakaNet/issues/2912)) ([2bf1cae](https://github.com/Ikalus1988/MisakaNet/commit/2bf1caec5222146c2afddc75db859f3435f6b787))
+
+
+### CI/CD
+
+* measure Workers CPU per script, closing the half of [#2897](https://github.com/Ikalus1988/MisakaNet/issues/2897) that was unmeasurable ([#2911](https://github.com/Ikalus1988/MisakaNet/issues/2911)) ([3fd281e](https://github.com/Ikalus1988/MisakaNet/commit/3fd281ea6a039c5c40695be9bb623433c1bcf053))
+* pr-quality-gate cancelled its own check, and gh reported that as fail ([#2922](https://github.com/Ikalus1988/MisakaNet/issues/2922)) ([fd1738e](https://github.com/Ikalus1988/MisakaNet/commit/fd1738e8424daeae357456cf12193a76429214a8)), closes [#2913](https://github.com/Ikalus1988/MisakaNet/issues/2913)
+
+## [2.42.0](https://github.com/Ikalus1988/MisakaNet/compare/v2.41.3...v2.42.0) (2026-10-06)
+
+
+### Features
+
+* generate the README benchmark table from latest.json ([#2904](https://github.com/Ikalus1988/MisakaNet/issues/2904)) ([3d8abd9](https://github.com/Ikalus1988/MisakaNet/commit/3d8abd9ffb4ca694da8775c16b48d5e79afa84bb))
+
+
+### Bug Fixes
+
+* stop a handoff document from opening a release PR ([#2905](https://github.com/Ikalus1988/MisakaNet/issues/2905)) ([9ceee5a](https://github.com/Ikalus1988/MisakaNet/commit/9ceee5aaa6795438e9294972d8da285b31005f13))
+* **worker:** server/discover was missing four of DiscoverResult's five required fields ([#2896](https://github.com/Ikalus1988/MisakaNet/issues/2896)) ([68a7f2f](https://github.com/Ikalus1988/MisakaNet/commit/68a7f2f281922a7bd28835662500b0b3152c854e))
+
+
+### Documentation
+
+* four self-referential staleness bugs, and a gate so the fifth one is caught ([#2902](https://github.com/Ikalus1988/MisakaNet/issues/2902)) ([372e048](https://github.com/Ikalus1988/MisakaNet/commit/372e048b7b370ea3bb5da0322a8288af12d2561c))
+* **lesson:** the silent-truncation family in the MCP intake worker ([#2849](https://github.com/Ikalus1988/MisakaNet/issues/2849)) ([bbecb11](https://github.com/Ikalus1988/MisakaNet/commit/bbecb11892b83b2a2e4fc12b58b4321f5336ba42))
+
+
+### CI/CD
+
+* gate uv.lock drift, exempting the version release-please owns ([#2906](https://github.com/Ikalus1988/MisakaNet/issues/2906)) ([3f2d566](https://github.com/Ikalus1988/MisakaNet/commit/3f2d566ed493fe8972aa3793d9e2677b77232639))
+
 ## [2.41.3](https://github.com/Ikalus1988/MisakaNet/compare/v2.41.2...v2.41.3) (2026-10-05)
 
 

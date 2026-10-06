@@ -13,9 +13,13 @@ import json
 import os
 from typing import Optional
 
-# Default MisakaNet search endpoint
-DEFAULT_ENDPOINT = "https://misakanet.dev/api/search"
-DEFAULT_MCP_URL = "https://misakanet.dev/mcp"
+# Default MisakaNet search endpoint.
+#
+# Was `misakanet.dev` until 2026-10-06; that domain does not resolve, and `/api/search`
+# 404s on the real host. See `integrations/langchain/misakanet_tool.py` for the full
+# measurement and for why the suite did not catch it.
+DEFAULT_ENDPOINT = "https://misakanet.org/api/lessons"
+DEFAULT_MCP_URL = "https://misakanet.org/mcp"
 
 
 def misakanet_search(
@@ -36,7 +40,7 @@ def misakanet_search(
             "CUDA out of memory", "Docker build fails with permission denied"
         max_results: Maximum number of results to return (1-10). Default: 3.
         endpoint: Custom search endpoint URL. Defaults to MISAKANET_SEARCH_URL
-            env var or https://misakanet.dev/api/search.
+            env var or https://misakanet.org/api/lessons.
         api_key: Optional API key for authenticated requests. Defaults to
             MISAKANET_API_KEY env var.
 
@@ -82,8 +86,10 @@ def misakanet_search(
     for i, result in enumerate(data["results"], 1):
         score = result.get("score", 0)
         title = result.get("title", "Untitled")
-        lesson_type = result.get("type", "unknown")
-        lines.append(f"{i}. [{lesson_type}] {title} (relevance: {score:.2f})")
+        # `type` does not exist on a lesson — see the note in the langchain integration for the
+        # measurement. `domain` is the field every lesson carries.
+        domain = result.get("domain", "unknown")
+        lines.append(f"{i}. [{domain}] {title} (relevance: {score:.2f})")
 
         # Include summary or problem if available
         if result.get("summary"):

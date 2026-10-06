@@ -579,7 +579,7 @@ function getMcpServerInfo(env) {
     // this constant drifts from it (rule R7, added 2026-09-18). Before that rule existed the value
     // was a hand-kept string that no script, workflow or var injection ever touched — it sat at
     // 2.27.1 through six releases, and it is the *only* version every MCP client reads.
-    version: env.MCP_VERSION || "2.41.3", // x-release-please-version
+    version: env.MCP_VERSION || "2.42.2", // x-release-please-version
   };
 }
 
@@ -7829,11 +7829,16 @@ export default {
 </div>
 <script>
 const MISAKA_VOICE_KEY = "misakanet_voice_enabled";
+// #2918: these four were *.v2.mp3, and no .v2 file has ever been committed under
+// docs/assets/voice/ -- every one of them returned 404, so "Enable voice" showed a
+// confirmed state and played silence. docs/connect.html already used the unversioned
+// names; this block and docs/start.html are the only two places that drifted.
+// NOTE: no backticks in this comment -- it lives inside a template literal.
 const MISAKA_VOICE = {
-  connect: "/assets/voice/connect-success.v2.mp3",
-  pair: "/assets/voice/pair-success.v2.mp3",
-  found: "/assets/voice/lesson-found.v2.mp3",
-  warning: "/assets/voice/failure-warning.v2.mp3",
+  connect: "/assets/voice/connect-success.mp3",
+  pair: "/assets/voice/pair-success.mp3",
+  found: "/assets/voice/lesson-found.mp3",
+  warning: "/assets/voice/failure-warning.mp3",
 };
 
 function isMisakaVoiceEnabled() {
