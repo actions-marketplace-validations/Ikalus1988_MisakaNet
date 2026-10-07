@@ -418,7 +418,12 @@ TOOLS = [
             " using keyword overlap — a high risk_level with"
             " empty matched_lessons means the profile matched"
             " (e.g. 'GPU' triggers the WSL profile) but no"
-            " specific lesson was close enough. Guards are"
+            " specific lesson was close enough. That reading holds"
+            " only while index_status is \"ok\"; it is \"unreadable\""
+            " when data/lessons.json could not be read or parsed, and"
+            " then matched_lessons is empty because no lesson was"
+            " checked rather than because none matched, with"
+            " index_error saying why. Guards are"
             " concrete 'do X before Y' suggestions drawn from"
             " matched profiles and lessons. Error cases: missing"
             " intent returns {error}. Side effects: none — this"
@@ -665,7 +670,16 @@ TOOLS = [
                     ),
                 },
             },
-            "minProperties": 1,
+            # Kept in step with the worker's definition; see the note there. `minProperties` is
+            # outside the keyword subset a conservative MCP client accepts, and an unrecognised
+            # keyword makes such a client register zero tools (#2967). These three branches say
+            # "at least one of" and also allow both, which the handler resolves by preferring
+            # lesson_id.
+            "oneOf": [
+                {"required": ["lesson_id"]},
+                {"required": ["lesson_path"]},
+                {"required": ["lesson_id", "lesson_path"]},
+            ],
         },
     },
 ]

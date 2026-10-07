@@ -381,7 +381,19 @@ const MCP_TOOLS = [
         path: { type: "string", description: "Lesson path relative to the repository, e.g. lessons/core/auto-merge-ci-pipeline.md — must be a file under lessons/ ending in .md (other repository files are not readable through this tool). Either path or id is required." },
         id: { type: "string", description: "Lesson ID, usually the filename without .md, e.g. auto-merge-ci-pipeline. Either id or path is required." },
       },
-      minProperties: 1,
+      // "At least one of" written out, because `minProperties` is not in the keyword subset a
+      // conservative MCP client accepts (#2967). dsh 0.2.0-rc.2 validates tool schemas against
+      // {type, oneOf, properties, required, additionalProperties, items, enum, const} and, because
+      // its bundle sets failOnStartupError: false, one unrecognised keyword does not raise — it
+      // silently registers **zero tools** for the whole server. `anyOf` would say this more
+      // directly but is outside that subset; the three `oneOf` branches below cover exactly the
+      // three accepted argument shapes, including both-supplied, which `path` gives precedence.
+      // tests/test_mcp_schema_branches.py holds the subset.
+      oneOf: [
+        { required: ["path"] },
+        { required: ["id"] },
+        { required: ["path", "id"] },
+      ],
     },
     annotations: {
       readOnlyHint: true,
@@ -544,7 +556,14 @@ const MCP_TOOLS = [
         lesson_id: { type: "string", description: "Lesson ID (filename stem), e.g. dco-auto-fix-workflow. Either lesson_id or lesson_path is required." },
         lesson_path: { type: "string", description: "Optional full path, e.g. lessons/core/dco-auto-fix-workflow.md. Either lesson_id or lesson_path is required." },
       },
-      minProperties: 1,
+      // See the note on `misakanet_get_lesson` above: `minProperties` sits outside the keyword
+      // subset a conservative MCP client accepts, and an unrecognised keyword there costs the
+      // client every tool on the server (#2967).
+      oneOf: [
+        { required: ["lesson_id"] },
+        { required: ["lesson_path"] },
+        { required: ["lesson_id", "lesson_path"] },
+      ],
     },
     annotations: {
       readOnlyHint: true,
@@ -571,6 +590,41 @@ const MCP_TOOLS = [
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2026-07-28"];
 const MAX_MCP_REQUEST_BYTES = 64 * 1024;
+
+/**
+ * MCP methods reachable without a token, because nothing they can return is private.
+ *
+ * This set was three explicit `===` comparisons — `initialize`, `tools/list`, `server/discover` —
+ * and every other method fell behind the 401 gate even though the handler below answers all of
+ * them. The SDK treats a 401 as a *transport* failure rather than a protocol miss, so from the
+ * client's side an answered-but-gated method and an unimplemented one look identical.
+ *
+ * Measured on 2026-10-07, unauthenticated vs. with a token:
+ *
+ *     initialize                200 / result   →  200 / result
+ *     tools/list                200 / result   →  200 / result
+ *     server/discover           200 / result   →  200 / result
+ *     ping                      401 / -32000   →  200 / -32601
+ *     resources/list            401 / -32000   →  200 / -32601
+ *     resources/templates/list  401 / -32000   →  200 / -32601
+ *     prompts/list              401 / -32000   →  200 / -32601
+ *
+ * Those four are what #2963 reports: DSH's `list_mcp_resources` calls `resources/list` on this
+ * server and surfaces `mcp-client(misakanet): server is disconnected`.
+ *
+ * `tools/call` is deliberately absent — it is the quota-bounded read and write path
+ * (`mcp-anonymous-read.test.mjs` pins anonymous reads through it), and a token does not unlock
+ * anything about it beyond the anonymous burst limit.
+ */
+const MCP_PUBLIC_METHODS = new Set([
+  "initialize",
+  "ping",
+  "tools/list",
+  "resources/list",
+  "resources/templates/list",
+  "prompts/list",
+  "server/discover",
+]);
 
 function getMcpServerInfo(env) {
   return {
@@ -4575,8 +4629,7 @@ async function handleMcpRequest(request, env, useSse = false, ctx) {
     // So this is a gate and its implementation disagreeing: the response was written
     // and the door in front of it was closed. A method that is answered but
     // unreachable is indistinguishable from one that is not implemented.
-    isPublicMethod = peekBody?.method === "initialize" || peekBody?.method === "tools/list"
-      || peekBody?.method === "server/discover"
+    isPublicMethod = MCP_PUBLIC_METHODS.has(peekBody?.method)
       || (typeof peekBody?.method === "string" && peekBody.method.startsWith("notifications/"));
   } catch (peekErr) {
     // Non-JSON body — treat as non-intake; log for diagnostics
@@ -4736,9 +4789,21 @@ async function handleMcpRequest(request, env, useSse = false, ctx) {
 
     if (method === "tools/list") {
       debugLog(env, 2, "tools/list: returning", MCP_TOOLS.length, "tools");
+      // `ListToolsResult.required` is `['cacheScope', 'resultType', 'tools', 'ttlMs']` in
+      // schema 2026-07-28 (read 2026-10-07). This response carried only `tools`, so it was
+      // non-conformant for the very version `SUPPORTED_PROTOCOL_VERSIONS` advertises — the same
+      // shape of defect `server/discover` had, and one a strict client rejects the way it rejects
+      // an unknown schema keyword (#2968). The tool definitions are identical for every caller and
+      // the method is public, so `public` is the honest `cacheScope` here; it is deliberately NOT
+      // added to `tools/call`, whose results can be per-node and must not be declared public.
       return respond({
         jsonrpc: "2.0", id: reqId,
-        result: { tools: MCP_TOOLS },
+        result: {
+          tools: MCP_TOOLS,
+          resultType: "complete",
+          ttlMs: 3600000,
+          cacheScope: "public",
+        },
       });
     }
 
@@ -4813,6 +4878,11 @@ async function handleMcpRequest(request, env, useSse = false, ctx) {
         result: {
           content: [{ type: "text", text: JSON.stringify(result) }],
           structuredContent,
+          // `CallToolResult.required` is `['content', 'resultType']`. No `cacheScope` and no
+          // `ttlMs` here: those belong to `CacheableResult`, which `CallToolResult` does not
+          // extend, and a per-node result declared `public` would be a lie the client would then
+          // act on by caching it across authorization contexts.
+          resultType: "complete",
         },
       });
     }
