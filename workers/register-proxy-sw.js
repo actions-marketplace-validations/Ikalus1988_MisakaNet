@@ -883,9 +883,17 @@ function applyDetailLevel(results, detail) {
 }
 
 // ── Kind filter + query-intent routing (Issue #1441) ──
+//
+// `usage` is anchored, and that is the whole point of #3001. Bare `usage` matched any
+// query containing the word — and the word is everywhere in CLI error text (`npm usage`,
+// `Usage: pip install ...`). An evidence-intent query then runs `filterByKind(results,
+// "evidence")`, and an FAQ row carries no `evidence_level`/`evidence_refs`, so EVERY
+// answered-question hit was filtered out: a question containing "usage" lost its FAQ
+// entirely. The intent this token was for is "how many times was this used", which is
+// `usage count` / `usage of …`, or 引用次数 / 被用过 above.
 
 const LESSON_INTENT_RE = /(lesson|lessons|learned|踩坑|记录|经验|memory|remember|preference)/i;
-const EVIDENCE_INTENT_RE = /(evidence|被用过|多少人|E4|验证|verification|引用次数|usage)/i;
+const EVIDENCE_INTENT_RE = /(evidence|被用过|多少人|E4|验证|verification|引用次数|usage\s*(?:count|of|number|次数|数))/i;
 
 // Client-supplied stable identity for anonymous registration (2026-09-13). A UUID,
 // a workspace id, a hostname — anything the client can regenerate. It is an
@@ -906,9 +914,32 @@ function isLessonResult(r) {
   return !!(r.title && (r.path || r.id));
 }
 
+// "Evidence" means "proven beyond the reporter's own claim". The tokens that route a query here
+// say exactly that: 被用过 / 多少人 / E4 / 验证 / verification / 引用次数 / usage count.
+//
+// This function used to test for the literal words `verified` / `confirmed` / `high`, which **never
+// occur**: the corpus grades trust on its own scale, and every one of the lessons carries an E
+// level — E0 x316, E1 x46, E2 x82, E3 x27, E4 x2. So the first branch was dead code. The second
+// branch read `content`/`description`/`summary`, and `compactResult` — the DEFAULT detail level —
+// emits none of them; it emits `problem`, truncated to 120 characters, which is the Problem section
+// and never the Verification one. Measured consequence: an evidence-intent query returned **zero**
+// results — not just no FAQ, no lessons either. On production, `... by exact ID usage count` came
+// back `no_match: true` with 0 hits, on a query whose lessons were sitting right there.
+//
+// E2 is the floor because it is the first level where somebody other than the author ran the
+// thing ("local smoke reproduced"); E0 is self-reported and E1 is only "a maintainer accepted the
+// intake", neither of which is what 验证 / verification asks for. That is a judgement call about
+// where to put the line, so it is named here rather than inlined.
+const EVIDENCE_RANK = { e0: 0, e1: 1, e2: 2, e3: 3, e4: 4 };
+const EVIDENCE_MIN_RANK = 2;
+
 function isEvidenceResult(r) {
   if (r.evidence_refs) return true;
-  const ev = (r.evidence_level || "").toLowerCase();
+  const ev = String(r.evidence_level || "").trim().toLowerCase();
+  if (Object.prototype.hasOwnProperty.call(EVIDENCE_RANK, ev)) {
+    return EVIDENCE_RANK[ev] >= EVIDENCE_MIN_RANK;
+  }
+  // Non-lesson producers (and any future writer) may still use the words. Keep accepting them.
   if (["verified", "confirmed", "high"].includes(ev)) return true;
   const content = (r.content || r.description || r.summary || "").toLowerCase();
   return content.includes("## verification") || content.includes("## verify");
