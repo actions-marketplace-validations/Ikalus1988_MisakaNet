@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-09T18:25:17.886816+00:00",
+  "generated_at": "2026-10-10T21:52:19.607411+00:00",
   "repo": "https://github.com/Ikalus1988/MisakaNet",
   "site": "https://misakanet.org",
   "item_count": 11,
@@ -7,36 +7,36 @@
     {
       "type": "merged_pr",
       "title": "chore(data): sync lessons.json + refresh feed",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3104",
-      "timestamp": "2026-10-09T18:23:08Z",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3131",
+      "timestamp": "2026-10-10T17:32:19Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "chore: auto-update lessons.json, public counts and generated pages",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3105",
-      "timestamp": "2026-10-09T18:22:55Z",
+      "title": "docs(reputation): the contributor snapshot is not a published board",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3127",
+      "timestamp": "2026-10-10T17:19:29Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "lesson: PID-kill by LLM-API inference terminates own turn (closes #2864)",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3038",
-      "timestamp": "2026-10-09T18:14:11Z",
+      "title": "docs(handoff): phase 18 — reputation.md fixed on main, decoupled from #2496",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3128",
+      "timestamp": "2026-10-10T17:18:22Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "docs(handoff): phase 10 — the release PR is wrong, not merely stale",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3103",
-      "timestamp": "2026-10-09T18:12:36Z",
+      "title": "docs(handoff): phases 16-17 — closed the test gap, corrected a wrong excuse, cut branches",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3124",
+      "timestamp": "2026-10-10T17:07:56Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "lessons: six contributor submissions, rebuilt on current main",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3072",
-      "timestamp": "2026-10-08T18:53:25Z",
+      "title": "fix(handoff): redact the home path FR3 caught, and re-audit three \"needs a decision\" labels",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3123",
+      "timestamp": "2026-10-10T16:40:50Z",
       "source": "github"
     },
     {
