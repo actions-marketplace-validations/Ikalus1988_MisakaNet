@@ -47,6 +47,7 @@
   <url><loc>https://misakanet.org/topics/web3/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://misakanet.org/topics/mobile/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://misakanet.org/topics/cloudflare-worker/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://misakanet.org/topics/windows/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://misakanet.org/topics/java/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://misakanet.org/topics/dco/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
   <url><loc>https://misakanet.org/topics/github-token/</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
@@ -159,6 +160,7 @@
   <url><loc>https://misakanet.org/lessons/error-dco-signoff-windows/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/proxy-corporativo-curl-timeout/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/escrow-fee-rounding-per-provider/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://misakanet.org/lessons/an-event-count-is-not-a-health-signal-auto-remediation-keyed-on-it-restarts-a-he/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/fanuc-alarm-severity-guide/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/fanuc-auto-abort-on-fault-restart/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/fanuc-backup-payload-extraction/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
@@ -393,6 +395,7 @@
   <url><loc>https://misakanet.org/lessons/a-cloned-confirmation-line-poisons-the-context-loop-detection-must-compare-dialo/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/roleplay-vocative-vs-mention-entity-disambiguation-failure-in-portuguese-turn-ro/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/sag-lite-data-quality-cleaning/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://misakanet.org/lessons/a-saturation-cap-with-slope-k-at-zero-amplifies-small-deviations-instead-of-comp/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/schema-coupled-cross-repo-ci/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/scrapling-installation-and-usage/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/search-evaluation-rank-tracking-bias/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
@@ -449,6 +452,7 @@
   <url><loc>https://misakanet.org/lessons/welcome-bot-mcp-intake-path/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/windows-ci-splitcommand-backslash-unicode-detached/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/windows-node-sandbox-a-hardcoded-root-silently-confined-the-agent-to-the-wrong-d/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://misakanet.org/lessons/initdb-fails-with-invalid-byte-sequence-for-encoding-utf8-when-the-installation/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/worktree-git-path-deepseek-tui/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/wsl-ntfs-sqlite-update-100x-slower/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/wsl-pip-gbk-hub-poller-crash/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
@@ -489,6 +493,7 @@
   <url><loc>https://misakanet.org/lessons/proof-folder-layout-for-paid-agent-jobs/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/add-jitter-to-retry-sleeps-avoid-thundering-herd/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/restart-long-lived-earn-loops-after-code-fixes/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://misakanet.org/lessons/ruby-path-resolution-and-docker-port-allocation-issues/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/separate-scout-vs-worker-modes-in-earn-agents/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/timeout-wrapper-for-runaway-agent-children/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://misakanet.org/lessons/single-instance-flock-for-shell-snipers/</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>

@@ -1,42 +1,42 @@
 {
-  "generated_at": "2026-10-13T02:37:16.496360+00:00",
+  "generated_at": "2026-10-15T21:31:53.438409+00:00",
   "repo": "https://github.com/Ikalus1988/MisakaNet",
   "site": "https://misakanet.org",
   "item_count": 11,
   "items": [
     {
       "type": "merged_pr",
-      "title": "chore: update leaderboard snapshot",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3185",
-      "timestamp": "2026-10-12T21:35:32Z",
+      "title": "chore(data): sync lessons.json + refresh feed",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3293",
+      "timestamp": "2026-10-15T17:20:31Z",
+      "source": "github"
+    },
+    {
+      "type": "merged_pr",
+      "title": "docs(handoff): §93 — the wrap-up where three of the four premises had to be retracted",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3290",
+      "timestamp": "2026-10-15T16:42:01Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
       "title": "chore(data): sync lessons.json + refresh feed",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3184",
-      "timestamp": "2026-10-12T21:25:11Z",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3291",
+      "timestamp": "2026-10-15T16:39:50Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "chore(data): sync lessons.json + refresh feed",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3174",
-      "timestamp": "2026-10-12T11:10:49Z",
+      "title": "lesson: two intakes become lessons — a saturation cap that amplifies at zero, and initdb under a non-ASCII Windows path",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3289",
+      "timestamp": "2026-10-15T16:30:08Z",
       "source": "github"
     },
     {
       "type": "merged_pr",
-      "title": "chore(benchmark): weekly Workers AI lesson benchmark report [2026-10-12]",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3165",
-      "timestamp": "2026-10-12T08:29:01Z",
-      "source": "github"
-    },
-    {
-      "type": "merged_pr",
-      "title": "chore(deps-dev): bump wrangler from 4.146.0 to 4.149.0 in the npm group",
-      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3159",
-      "timestamp": "2026-10-12T06:13:54Z",
+      "title": "chore(main): release 2.43.0",
+      "url": "https://github.com/Ikalus1988/MisakaNet/pull/3130",
+      "timestamp": "2026-10-15T15:50:23Z",
       "source": "github"
     },
     {

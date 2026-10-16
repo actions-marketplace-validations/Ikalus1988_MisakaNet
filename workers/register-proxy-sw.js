@@ -17,11 +17,24 @@ const {
 const _handlers = await import("./lib/handlers.js");
 const { GITHUB_API, REPO, PUBLIC_DATA_BASE } = _handlers;
 
+// The contributor ranking and its exclusion rule (#1919). Pure — no env, no clock, no network.
+const _leaderboard = await import("./lib/contributor-leaderboard.js");
+const { scoreBoard, boardMoved, shouldNotifyTopChange } = _leaderboard;
+
 // 30s meant the corpus cache expired every half minute of traffic and each expiry
 // cost a KV write of the whole lesson list. The corpus changes at most daily (the
 // daily sync), so five minutes is both fresher than the data and ~10x cheaper in
 // writes against the 1,000/day budget.
 const PROXY_CACHE_TTL = 300_000;
+
+// The lifetime of a registered token — one constant, because it is one number.
+//
+// It used to be written out at each site, and the sites disagreed: `misakanet_register` granted
+// `86400 * 30` while the `/mcp/pair` flow behind the `/start` page granted `86400`, so a new user
+// who onboarded through the page lost access after a day while `AGENTS.md` §3.3 promised 30
+// (measured 2026-10-13; reported as #2084). The `client:<client_id>` mapping is deliberately on
+// the same window: if it expired first, renewing a token would silently return a *new* node.
+const MCP_TOKEN_TTL_SECONDS = 86400 * 30;
 // These probes are for endpoints this worker does **not** serve. Its own public URLs cannot be used
 // from inside it, and the reason is worth writing down, because the previous list did exactly that
 // and produced nothing but noise.
@@ -585,6 +598,35 @@ const MCP_TOOLS = [
       },
     },
   },
+  {
+    name: "misakanet_me_inbox",
+    description: "[AGENT READABLE INBOX] Check the status of a previously submitted intake (question, missing_lesson, etc.) without re-submitting. Accepts an intake_id (e.g. 'issue-1234' or '1234') from a prior misakanet_submit_intake response, or a dedup_key (the 16-char hash). Returns: {status: 'answered'|'pending'|'converted'|'not_found', ...} — 'answered' includes the maintainer's answer, 'converted' includes the lesson_id this intake became. Read-only, rate-limited, no auth required.\nReturns: object {intake_id, status, answer?, lesson_id?, issue_url?, note}.\nExample: misakanet_me_inbox(intake_id='issue-1528') or misakanet_me_inbox(dedup_key='a1b2c3d4e5f67890')",
+    inputSchema: {
+      type: "object",
+      properties: {
+        intake_id: { type: "string", description: "Intake ID from a prior submit_intake response, e.g. 'issue-1528' or '1528'. Either intake_id or dedup_key is required." },
+        dedup_key: { type: "string", description: "The dedup_key (16-char hash) from a prior submit_intake response. Either intake_id or dedup_key is required." },
+      },
+      minProperties: 1,
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        intake_id: { type: "string" },
+        status: { type: "string", enum: ["answered", "pending", "converted", "unknown", "not_found"] },
+        answer: { type: "string" },
+        lesson_id: { type: "string" },
+        issue_url: { type: "string" },
+        note: { type: "string" },
+      },
+    },
+  },
 ];
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -633,7 +675,7 @@ function getMcpServerInfo(env) {
     // this constant drifts from it (rule R7, added 2026-09-18). Before that rule existed the value
     // was a hand-kept string that no script, workflow or var injection ever touched — it sat at
     // 2.27.1 through six releases, and it is the *only* version every MCP client reads.
-    version: env.MCP_VERSION || "2.42.3", // x-release-please-version
+    version: env.MCP_VERSION || "2.43.0", // x-release-please-version
   };
 }
 
@@ -3579,13 +3621,13 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
             agent_type: known.agent_type || agentType,
             registered_at: known.registered_at || mapping.created_at || now,
             token: known.token,
-          }), { expirationTtl: 86400 * 30 }),
+          }), { expirationTtl: MCP_TOKEN_TTL_SECONDS }),
           storePut(env, `mcp_token:${known.token}`, JSON.stringify({
             node_id: mapping.node_id,
             agent_type: known.agent_type || agentType,
             registered_at: known.registered_at || mapping.created_at || now,
-            expires: new Date(Date.now() + 86400 * 30 * 1000).toISOString(),
-          }), { expirationTtl: 86400 * 30 }),
+            expires: new Date(Date.now() + MCP_TOKEN_TTL_SECONDS * 1000).toISOString(),
+          }), { expirationTtl: MCP_TOKEN_TTL_SECONDS }),
         ]);
         if (refreshed.some((ok) => !ok)) {
           logInternal("register: token refresh on reuse failed", kvWriteStats.last_error);
@@ -3632,15 +3674,15 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
       registered_at: new Date().toISOString(),
       token: token,
       ...(referralOk ? { referred_by: referralCode } : {}),
-    }), { expirationTtl: 86400 * 30 });
+    }), { expirationTtl: MCP_TOKEN_TTL_SECONDS });
 
     // Store token lookup (for auth verification)
     const tokenStored = await storePut(env, `mcp_token:${token}`, JSON.stringify({
       node_id: nodeId,
       agent_type: agentType,
       registered_at: new Date().toISOString(),
-      expires: new Date(Date.now() + 86400 * 30 * 1000).toISOString(),
-    }), { expirationTtl: 86400 * 30 });
+      expires: new Date(Date.now() + MCP_TOKEN_TTL_SECONDS * 1000).toISOString(),
+    }), { expirationTtl: MCP_TOKEN_TTL_SECONDS });
 
     // Never hand out a token that was not stored: the caller would fail on its very
     // next authenticated call with no way to tell why. Storage trouble is temporary,
@@ -3665,7 +3707,7 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
         node_id: nodeId,
         agent_type: agentType,
         created_at: new Date().toISOString(),
-      }), { expirationTtl: 86400 * 30 });
+      }), { expirationTtl: MCP_TOKEN_TTL_SECONDS });
       if (!mapped) logInternal("register: client_id mapping write failed", kvWriteStats.last_error);
     }
 
@@ -4123,6 +4165,128 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
     };
   }
 
+  if (toolName === "misakanet_me_inbox") {
+    // Rate-limit anonymous reads (same window as search/get_lesson).
+    if (!authToken) {
+      const ip = clientIp || "unknown";
+      const refusal = await consumeQuota(env, {
+        scope: "rate_read", bucket: ip, period: readBurstPeriod(), limit: READ_BURST_LIMIT,
+        message: READ_BURST_MESSAGE,
+        hint: `retry after up to ${READ_BURST_WINDOW_SECONDS}s; no registration needed`,
+      });
+      if (refusal) return refusal;
+    }
+
+    const rawId = String(args.intake_id || "").trim();
+    const dedupKey = String(args.dedup_key || "").trim();
+    if (!rawId && !dedupKey) return { error: "intake_id or dedup_key is required" };
+
+    // Normalise intake_id: "issue-1234" → "1234", "1234" → "1234"
+    const issueNum = rawId.replace(/^issue-/, "").replace(/\D/g, "");
+
+    // 1. Look up in D1 questions table (works for questions and any intake
+    //    whose dedup_hash was synced by sync_answered_questions.py).
+    const d1 = d1Binding(env);
+    let row = null;
+    if (d1) {
+      try {
+        let res;
+        if (dedupKey) {
+          res = await d1.prepare(
+            "SELECT issue_number, dedup_hash, problem, status, answer, issue_url, answered_at FROM questions WHERE dedup_hash = ?1 LIMIT 1"
+          ).bind(dedupKey).all();
+        } else if (issueNum) {
+          res = await d1.prepare(
+            "SELECT issue_number, dedup_hash, problem, status, answer, issue_url, answered_at FROM questions WHERE issue_number = ?1 LIMIT 1"
+          ).bind(parseInt(issueNum, 10)).all();
+        }
+        row = (res && res.results && res.results[0]) || null;
+      } catch (_) {}
+    }
+
+    if (row) {
+      if (row.status === "answered" && row.answer) {
+        return {
+          intake_id: `issue-${row.issue_number}`,
+          status: "answered",
+          answer: row.answer,
+          issue_url: row.issue_url || "",
+          answered_at: row.answered_at || "",
+          note: "Maintainer answered this question.",
+        };
+      }
+      return {
+        intake_id: `issue-${row.issue_number}`,
+        status: "pending",
+        issue_url: row.issue_url || "",
+        note: "Open and awaiting a maintainer answer. Check again later.",
+      };
+    }
+
+    // 2. Not in questions table — check if the intake was converted to a
+    //    lesson. Delegated to lookupIntakeConversion, which is the faithful
+    //    port of scripts/intake_receipt.py and reads the citation fields that
+    //    actually exist (source / provenance.issue / provenance.related /
+    //    provenance.source).
+    //
+    //    The previous version of this branch scanned meta.intake_id /
+    //    contrib_id / source_issue / related_issues. None of those keys exist
+    //    in the corpus — measured 2026-10-01 across 461 lessons: 0 / 0 / 0 / 0,
+    //    while `provenance` appears in 428. That scan could never match, so
+    //    this branch always fell through and every converted intake reported
+    //    `pending` forever. Same defect as the JSONL files the review called
+    //    out, just pointed at a different source that is also not there.
+    if (issueNum) {
+      try {
+        const hits = await lookupIntakeConversion(env, parseInt(issueNum, 10));
+        if (hits && hits.length) {
+          const first = hits[0];
+          return {
+            intake_id: `issue-${issueNum}`,
+            status: hits.length === 1 ? "converted" : "converted",
+            lesson_id: first.id || first.path || "",
+            lesson_title: first.title || "",
+            lesson_path: first.path || "",
+            lesson_status: first.status || "",
+            converted_count: hits.length,
+            note: hits.length === 1
+              ? "This intake was converted into a lesson."
+              : `This intake is cited by ${hits.length} lessons.`,
+          };
+        }
+      } catch (_) {}
+    }
+
+    // 3. Fallback: check KV dedup store for the issue URL.
+    if (hasDurableStore(env)) {
+      try {
+        // Try by issue number in dedup keys — not directly indexable,
+        // but the original submit_intake stores the issue URL at intake_dedup:{hash}.
+        if (dedupKey) {
+          const stored = await storeGet(env, `intake_dedup:${dedupKey}`, "text");
+          if (stored) {
+            return {
+              intake_id: rawId || `dedup-${dedupKey}`,
+              status: "pending",
+              issue_url: stored,
+              note: "Intake found in dedup store. It may still be pending review.",
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
+    return {
+      intake_id: rawId || `dedup-${dedupKey}`,
+      status: "unknown",
+      note: "Nothing found in the D1 question table, the lesson corpus, or the dedup store. " +
+            "Read this as 'cannot be determined', not 'never happened': only a minority of " +
+            "lessons carry an intake citation (provenance.issue / source), so most converted " +
+            "intakes leave no backlink to find. A bare `not_found` would claim more than the " +
+            "data supports.",
+    };
+  }
+
   if (toolName === "misakanet_submit_intake") {
     if (!args.problem) return { error: "problem is required" };
 
@@ -4261,6 +4425,8 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
               // count whatever an unauthenticated caller felt like writing (#2075).
               const ck = `intake_source_count:${intakeSourceBucket(args.source)}`;
               const cn = parseInt((await storeGet(env, ck, "text")) || "0", 10) || 0;
+              // 30 days here is a *ledger window* for the intake-source count, unrelated to the token
+              // lifetime above — deliberately its own number rather than MCP_TOKEN_TTL_SECONDS.
               await storePut(env, ck, String(cn + 1), { expirationTtl: 86400 * 30 });
             } catch (_) { /* best-effort ledger (feeds #1528) */ }
           }
@@ -4638,7 +4804,7 @@ async function handleMcpRequest(request, env, useSse = false, ctx) {
     // checkable by any agent before reusing a lesson (E4 reuse receipts).
     const openTools = ["misakanet_submit_intake", "misakanet_register",
                        "misakanet_search", "misakanet_get_lesson",
-                       "misakanet_me_events"];
+                       "misakanet_me_events", "misakanet_me_inbox"];
     isIntakeCall = peekBody?.method === "tools/call" && openTools.includes(peekBody?.params?.name);
     // Notifications (notifications/initialized etc.) are lifecycle fire-and-forget
     // with no response and no business data — the MCP spec requires clients to
@@ -4688,10 +4854,31 @@ async function handleMcpRequest(request, env, useSse = false, ctx) {
       hasExpectedToken: !!expectedToken,
       isIntakeCall,
     });
+    // The recovery hint lives in `error.data` (JSON-RPC's own field for structured error info),
+    // deliberately **not** inside `addDebugContext`: that helper returns the bare object when
+    // DEBUG_LEVEL < 1, which is production. Measured 2026-10-13 against production, a caller with a
+    // wrong token received exactly `{"code":-32000,"message":"Unauthorized"}` — and the SDK behind
+    // DeepSeek Harness classifies that as a *transport* fault and retries forever instead of
+    // recovering (the same shape as the `server/discover` bug documented at
+    // `mcp-anonymous-read.test.mjs:161`). A token that expired on schedule is not a transport fault
+    // and is fixable in one call, so the body the caller actually gets has to say how.
+    //
+    // `code` and `message` are unchanged on purpose: clients match on them.
+    const reason = token ? "token_invalid_or_expired" : "no_token_provided";
     return respond(
-      { jsonrpc: "2.0", error: addDebugContext(env, { code: -32000, message: "Unauthorized" }, {
+      { jsonrpc: "2.0", error: addDebugContext(env, {
+        code: -32000,
+        message: "Unauthorized",
+        data: {
+          reason,
+          recovery: "misakanet_register",
+          recovery_hint: "Call misakanet_register with the same `client_id` you registered with: "
+            + "it returns the same node_id and a fresh token. Without a `client_id` each call "
+            + "creates a new node, so keep it.",
+        },
+      }, {
         step: "authentication",
-        reason: token ? "token_invalid_or_expired" : "no_token_provided",
+        reason,
         token_prefix: maskToken(token),
       }) },
       401,
@@ -6885,6 +7072,202 @@ function classifyRequest(request, url) {
 
 // ── end classification ──
 
+// ── Contributor leaderboard: computed and stored here, not in git (issue #1919) ────
+//
+// The scoring, the exclusion rule and the reasoning live in
+// `workers/lib/contributor-leaderboard.js` — read its header for why this is in the worker and
+// what it replaced. This block is only the I/O: fetch, compare against stored state, persist,
+// notify.
+//
+// The state is one `kv_store` row (D1, KV as fallback), so there is no new table and no new
+// endpoint with a credential to leak. `GET /api/leaderboard/state` reads it; nothing writes it
+// over HTTP.
+const LEADERBOARD_STATE_KEY = "contributor_leaderboard";
+
+// `17 3 * * *` — daily, 03:17 UTC. The minute is arbitrary and kept from PR #2496's proposal.
+const LEADERBOARD_CRON = "17 3 * * *";
+
+/** One page of the default branch's commit history, via GraphQL. */
+async function fetchDefaultBranchCommits({ token, owner, repo, cursor }) {
+  const after = cursor ? `, after: ${JSON.stringify(cursor)}` : "";
+  const query = `query {
+  repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(repo)}) {
+    defaultBranchRef {
+      target {
+        ... on Commit {
+          history(first: 100${after}) {
+            pageInfo { hasNextPage endCursor }
+            nodes { oid committedDate author { user { login } name } }
+          }
+        }
+      }
+    }
+  }
+}`;
+  const resp = await fetchWithTimeout(GITHUB_API + "/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "User-Agent": "MisakaNet-Worker",
+    },
+    body: JSON.stringify({ query }),
+  });
+  if (!resp.ok) throw new Error(`GitHub GraphQL HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (data.errors) throw new Error(`GitHub GraphQL error: ${JSON.stringify(data.errors).slice(0, 200)}`);
+  const history = data?.data?.repository?.defaultBranchRef?.target?.history;
+  if (!history) throw new Error("GitHub GraphQL response had no commit history");
+  return { nodes: history.nodes || [], pageInfo: history.pageInfo || {} };
+}
+
+/** Merged pull requests, via REST, for the per-author median PR size. Capped at `maxPages`×100. */
+async function fetchMergedPulls({ token, owner, repo, maxPages = 10 }) {
+  const merged = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const resp = await fetchWithTimeout(
+      `${GITHUB_API}/repos/${owner}/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=${page}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github.v3+json", "User-Agent": "MisakaNet-Worker" } },
+    );
+    if (!resp.ok) throw new Error(`GitHub REST HTTP ${resp.status} listing pull requests`);
+    const batch = await resp.json();
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    merged.push(...batch.filter((pr) => pr && pr.merged_at));
+    if (batch.length < 100) break;
+  }
+  return merged;
+}
+
+/** The stored board, or `{ board: null }` when nothing has been recorded yet. */
+async function readLeaderboardState(env) {
+  const raw = await storeGet(env, LEADERBOARD_STATE_KEY, "json");
+  if (!raw || typeof raw !== "object") return { board: null };
+  return {
+    board: Array.isArray(raw.board) ? raw.board : null,
+    bench: raw.bench || null,
+    updated_at: raw.updated_at || null,
+  };
+}
+
+/** How many rows differ from `previous` by login or by more than 0.5 points. */
+function countChangedRows(previous, current) {
+  if (!Array.isArray(previous)) return current.length;
+  const before = new Map(previous.map((r) => [String(r && r.login), Number(r && r.score) || 0]));
+  let changed = 0;
+  for (const row of current) {
+    const was = before.get(String(row.login));
+    if (was === undefined || Math.abs(was - row.score) > 0.5) changed++;
+  }
+  return changed + Math.max(0, previous.length - current.length);
+}
+
+async function openLeaderboardIssue(env, board, previous, now) {
+  const token = env.REGISTER_TOKEN;
+  if (!token) return { ok: false, error: "REGISTER_TOKEN not configured" };
+  const top = board[0];
+  const oldTop = previous && previous[0] ? previous[0] : null;
+  const title = oldTop
+    ? `🏆 Leaderboard Update: ${top.login} is now #1!`
+    : `🏆 First Leaderboard: ${top.login} takes #1!`;
+
+  const lines = [oldTop ? "## Leaderboard Change Detected" : "## First Leaderboard Snapshot", ""];
+  if (oldTop) {
+    lines.push("| | Previous | Current |", "|---|---|---|");
+    lines.push(`| **#1** | ${oldTop.login} (${oldTop.score}) | **${top.login} (${top.score})** |`);
+    // The Python labelled this "spots changed" while passing it the whole roster, so it printed the
+    // number of contributors. It is the changed count here, which is what the label says.
+    lines.push(`| **Changed** | ${countChangedRows(previous, board)} spots changed |`);
+    lines.push("");
+  }
+  lines.push("### Full Leaderboard", "", "| Rank | Contributor | Score |", "|------|------------|-------|");
+  board.slice(0, 20).forEach((entry, i) => lines.push(`| ${i + 1} | ${entry.login} | ${entry.score} |`));
+  lines.push("", "_Auto-generated by the MisakaNet worker's daily cron. State: `GET /api/leaderboard/state`._");
+  lines.push(`_Timestamp: ${new Date(now).toISOString().replace(/\.\d+Z$/, "Z")}_`);
+
+  const resp = await fetchWithTimeout(`${GITHUB_API}/repos/${REPO}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/vnd.github.v3+json",
+      "User-Agent": "MisakaNet-Worker",
+    },
+    body: JSON.stringify({ title, body: lines.join("\n"), labels: ["leaderboard", "automated"] }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) return { ok: false, error: `issue creation failed: ${data.message || resp.status}` };
+  return { ok: true, issue: data.number, url: data.html_url };
+}
+
+/**
+ * Recompute the board, reconcile it with the stored state, and record the result.
+ *
+ * Returns a summary rather than throwing: the caller is a cron, and a failure has to be visible in
+ * the log without taking the other cron jobs down with it.
+ */
+async function refreshContributorLeaderboard(env) {
+  const token = env.REGISTER_TOKEN;
+  if (!token) return { ok: false, error: "REGISTER_TOKEN not configured" };
+
+  const [owner, repo] = String(REPO).split("/");
+  const now = Date.now();
+
+  const commits = [];
+  let cursor = null;
+  for (let page = 0; page < 20; page++) {
+    const batch = await fetchDefaultBranchCommits({ token, owner, repo, cursor });
+    commits.push(...batch.nodes);
+    if (!batch.pageInfo.hasNextPage) break;
+    cursor = batch.pageInfo.endCursor;
+  }
+
+  const mergedPrs = await fetchMergedPulls({ token, owner, repo });
+  const board = scoreBoard(commits, mergedPrs, now);
+  if (!board.length) return { ok: false, error: "computed an empty leaderboard" };
+
+  const stored = await readLeaderboardState(env);
+  const previous = stored.board;
+
+  // The bench board is a different ranking (`scripts/gen_leaderboard.py` → `data/`), so it stays
+  // where it is; only its #1 is carried here, as before.
+  //
+  // `main`, not `data`: measured 2026-10-15, `git ls-tree origin/data -- data/bench_leaderboard.json`
+  // is empty while the file is tracked on `main`. The `data` branch carries the lesson index and the
+  // badges, not this file, and a wrong ref here would 404 on every run — inside a `catch` that only
+  // logs, so the bench half of the notification would have gone quietly dead.
+  let benchTop = null;
+  try {
+    const bench = await fetchFromGitHub(token, "data/bench_leaderboard.json", "main");
+    const row = bench && bench.leaderboard && bench.leaderboard[0];
+    if (row && row.agent) benchTop = { top_agent: row.agent, top_score: row.passed };
+  } catch (_) {
+    // Absent or unreadable bench data is not a reason to skip the contributor board.
+  }
+
+  // `boardMoved` already answers "no state yet" (it treats a missing previous board as moved), so
+  // there is no separate first-run branch here. The write is conditional for the same reason the
+  // Python's `git diff --cached --quiet` guard was: an unchanged day must not touch the store, or
+  // `updated_at` alone would count as a change and the daily cron would never settle.
+  const benchChanged = !!(benchTop && benchTop.top_agent && benchTop.top_agent !== stored.bench?.top_agent);
+  const moved = boardMoved(previous, board);
+
+  let storedOk = true;
+  if (moved || benchChanged) {
+    storedOk = await storePut(env, LEADERBOARD_STATE_KEY, JSON.stringify({
+      board,
+      bench: benchTop,
+      updated_at: new Date(now).toISOString(),
+    }));
+  }
+
+  let notified = null;
+  if (shouldNotifyTopChange(previous, board) || benchChanged) {
+    notified = await openLeaderboardIssue(env, board, previous, now).catch((e) => ({ ok: false, error: e.message }));
+  }
+
+  return { ok: true, entries: board.length, top: board[0], moved, benchChanged, stored: storedOk, notified };
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -7658,6 +8041,28 @@ export default {
       return handleReputationLeaderboard(request, env);
     }
 
+    // GET /api/leaderboard/state — the contributor ranking this worker computes on its own cron.
+    //
+    // Read-only **by construction**: the handler is registered for GET only, so a POST on this path
+    // falls through to the 404 below rather than reaching any write. The state is written by the
+    // cron through `storePut`, never over HTTP — the design point of #1919 is that this row is a
+    // worker's own bookkeeping, so there is no public write surface to protect. An earlier version
+    // of this change (PR #2496) proposed a POST endpoint here with no credential check; it was
+    // rejected in review and this route exists so the state is readable without adding one.
+    if (request.method === "GET" && url.pathname === "/api/leaderboard/state") {
+      try {
+        const state = await readLeaderboardState(env);
+        return jsonResponse({
+          source: "worker-cron",
+          cron: LEADERBOARD_CRON,
+          available: !!state.board,
+          board: state.board,
+          bench: state.bench,
+          updated_at: state.updated_at || null,
+        });
+      } catch (e) { return errorResponse("api handler failed", "internal_error", 502, e); }
+    }
+
     // GET /api/insights/demand-board — public aggregate view of intake clusters
     if (request.method === "GET" && url.pathname === "/api/insights/demand-board") {
       if (!env.MISAKANET_KV) return jsonResponse({ success: true, available: false, summary: [] });
@@ -7778,7 +8183,20 @@ export default {
       pairData.used_ip = request.headers.get("CF-Connecting-IP") || "unknown";
       await storePut(env, pairKey, JSON.stringify(pairData), { expirationTtl: 86400 });
 
-      // Generate short-lived token (24h, cryptographically secure)
+      // Generate a token with the same lifetime the rest of the product grants.
+      //
+      // This used to be 24h, deliberately, and that was the defect (measured 2026-10-13): the
+      // `/start` page is the path a *new human user* takes (`/connect` → `/start` → paste the code),
+      // so the page onboarding handed out a token 30× shorter than `misakanet_register` does
+      // (`86400 * 30` at the two issuance sites above) and than `AGENTS.md` §3.3 documents
+      // ("token 有效期 30 天"). A day later the caller is refused — with a bare `Unauthorized` until
+      // the same-day fix above — and the reported symptom is "registration failed, I can't use
+      // MisakaNet" (#2084: "agent loses token after 24h silent period; misakanet_register returns a
+      // brand-new node_id every cold-start").
+      //
+      // The *pairing code* is the short-lived part (600s) and stays that way; the token is a bearer
+      // credential, and there is no path that grants one under stronger trust than this one. One
+      // lifetime, stated in one place, for the same kind of credential.
       const tokenChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
       let token = "mcp_";
       const pairTokenBytes = new Uint8Array(32);
@@ -7788,11 +8206,11 @@ export default {
       // Store token in KV for validation
       await storePut(env, `mcp_token:${token}`, JSON.stringify({
         created: new Date().toISOString(),
-        expires: new Date(Date.now() + 86400000).toISOString(),
+        expires: new Date(Date.now() + MCP_TOKEN_TTL_SECONDS * 1000).toISOString(),
         ip: pairData.ip,
-      }), { expirationTtl: 86400 });
+      }), { expirationTtl: MCP_TOKEN_TTL_SECONDS });
 
-      return jsonResponse({ token, expires_in: 86400 });
+      return jsonResponse({ token, expires_in: MCP_TOKEN_TTL_SECONDS });
     }
 
     // POST /mcp — Streamable HTTP MCP endpoint (read-only tools)
@@ -8160,6 +8578,18 @@ async function getCode() {
       ctx.waitUntil(refreshSearchIndex(env).then(r =>
         console.log("[bm25-index]", JSON.stringify(r))
       ).catch(e => console.error("[bm25-index] failed", e.message)));
+    }
+
+    // Contributor leaderboard: recompute, reconcile with the stored state, notify on a change of #1.
+    //
+    // Gated on the cron expression, not on the interval: this worker runs every 15 minutes and a
+    // ranking walk of 2,000 commits plus up to 1,000 pull requests is not something to do 96 times
+    // a day. The state it compares against used to be a commit on `main` — 1,026 of them, 25% of
+    // the repository's history (#1919) — and the daily cadence is the fix for that too.
+    if (controller.cron === LEADERBOARD_CRON && hasDurableStore(env)) {
+      ctx.waitUntil(refreshContributorLeaderboard(env).then(r =>
+        console.log("[leaderboard]", JSON.stringify(r))
+      ).catch(e => console.error("[leaderboard] failed", e.message)));
     }
   },
 };

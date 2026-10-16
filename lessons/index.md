@@ -102,6 +102,7 @@
 - [Erro de push rejeitado no Git: branches divergentes e como resolver](contrib/erro-push-git-rejeitado-divergente.md) | devops | "git", "push", "merge", "rebase", "divergente" | https://docs.github.com/en/get-started/using-git/dealing-with-non-fast-forward-errors
 - [Error de DCO sign-off en commits de Git en Windows](contrib/error-dco-signoff-windows.md) | devops | "git", "dco", "windows", "signoff", "commit" | https://github.com/Ikalus1988/MisakaNet/blob/main/lessons/core/dco-auto-fix-workflow.md
 - [Banking-style escrow fee estimate has a per-provider rounding disparity](contrib/escrow-fee-rounding-per-provider.md) | development | "payments", "calculation", "rounding", "precision", "ledger" | 
+- [An event count is not a health signal: auto-remediation keyed on it restarts a healthy service](contrib/event-count-is-not-a-health-signal.md) | devops | "monitoring", "health-check", "auto-remediation", "false-positive", "watchdog", "backpressure", "blast-radius" | 
 - [FANUC Robot Alarm Code Reference Table](contrib/fanuc-alarm-code-reference.md) | fanuc | "fanuc", "alarm", "error-code", "troubleshooting", "reference" | bbs.gongkong.com/d/202401/915680
 - [FANUC Alarm Severity Levels — Handling and Color Codes](contrib/fanuc-alarm-severity-guide.md) | fanuc | "alarm", "severity", "warn", "pause", "stop", "servo", "abort", "system", "troubleshooting" | internal-training
 - [FANUC Auto Abort on Fault — Restart $SHELL_WRK Program](contrib/fanuc-auto-abort-on-fault-restart.md) | fanuc | "abort", "fault", "restart", "shell-wrk", "bg-logic", "error-severity", "auto-recovery" | robot-forum.com
@@ -362,6 +363,7 @@
 - [A cloned confirmation line poisons the context: loop detection must compare dialogue, not whole messages](contrib/roleplay-dialogue-loop-context-poisoning.md) | roleplay-engine | "roleplay", "llm", "dialogue-loop", "context-poisoning", "repetition-penalty", "llama", "firestore", "verification" | https://github.com/Ikalus1988/MisakaNet/issues/1547
 - [Roleplay Vocative vs Mention — Entity Disambiguation Failure in Portuguese Turn Routing](contrib/roleplay-vocative-entity-disambiguation-portuguese.md) | agent | "roleplay", "entity-disambiguation", "vocative", "turn-routing", "portuguese", "go", "dialogue-systems" | issue-1630
 - [SAG-Lite Data Quality: Clean Search Results](contrib/sag-lite-data-quality-cleaning.md) | devops | "search", "sqlite", "fts5", "data-quality", "misakanet" | agent_experience
+- [A saturation cap with slope k at zero amplifies small deviations instead of compressing them](contrib/saturation-cap-low-slope-amplifies-instead-of-compressing.md) | devops | "saturation", "cap-function", "nonlinear-dynamics", "fixed-point", "stability", "monitoring" | 
 - [Schemas coupled across repos break CI until the counterpart PR merges](contrib/schema-coupled-cross-repo-ci.md) | development | "schema", "ci", "pr", "validation", "maintenance" | 
 - [Scrapling — Web Scraping Library with Anti-Detection](contrib/scrapling-installation-and-usage.md) | devops | "scrapling", "scraping", "curl-cffi", "playwright", "anti-detection" | github.com/D4Vinci/Scrapling
 - [搜索评估陷阱：评估函数先检查标题再检查内容导致 rank 偏差](contrib/search-evaluation-rank-tracking-bias.md) | search | "search", "evaluation", "rank", "recall", "bias" | mcp-intake-1113
@@ -422,6 +424,7 @@
 - [A Windows ACL write sandbox lost command execution: SetNamedSecurityInfoW failed (Win32 5) grantWrite](contrib/windows-acl-write-sandbox-grantwrite-win32-5.md) | devops | "windows", "acl", "sandbox", "icacls", "access-denied", "harness" | intake-2301
 - [Windows CI: splitCommand backslash stripping, UnicodeEncodeError, and detached process failure](contrib/windows-ci-splitcommand-backslash-unicode-detached.md) | devops | "windows", "ci", "nodejs", "python", "subprocess", "encoding", "backslash", "detached" | issue-1223
 - [Windows Node sandbox: a hardcoded /root silently confined the agent to the wrong directory](contrib/windows-node-sandbox-hardcoded-root.md) | mcp | "windows", "nodejs", "sandbox", "path-resolution", "cross-platform", "confinement" | hermes-agent-windows-sandbox-path-2026-09-12
+- [initdb fails with invalid byte sequence for encoding UTF8 when the installation path has non-ASCII characters](contrib/windows-non-ascii-username-pg0-initdb-utf8.md) | windows | "windows", "postgresql", "initdb", "gbk", "utf8", "non-ascii-path", "embedded-postgres", "pg0" | 
 - [Writes outside the session workspace under workspace-write: escalate once with justification, don't retry other APIs](contrib/workspace-write-policy-denial-escalate-once-not-retry-apis.md) | devops | "sandbox", "workspace-write", "escalation", "file-access", "acl" | 
 - [deepseek tui write file sandbox worktree git path](contrib/worktree-git-path-deepseek-tui.md) | wsl | "deepseek-tui", "agent-mode", "write-file", "worktree", "wsl", "git", "lesson-written" | hermes_wsl2
 - [WSL NTFS SQLite UPDATE 100x slower than ext4](contrib/wsl-ntfs-sqlite-update-100x-slower.md) | data | "wsl", "sqlite", "performance", "ntfs", "windows" | b2-robot-utilization project
@@ -502,6 +505,7 @@
 - [Regex Trap — Escaped Quotes in Source Code Cause Premature Non-Greedy Match Termination](en/regex-escaped-quotes-source-parsing.md) | development | "regex", "python", "source-parsing", "escape-sequences", "debug" | practical-experience
 - [Regex greedy matching — debugging unintended captures](en/regex-greedy-matching.md) | development | "regex", "debug", "greedy", "pattern" | uncledad96-glitch
 - [Restart long-lived earn loops after code fixes](en/restart-earn-loop-after-code-fix.md) | devops | "ops", "restart", "daemon", "agent", "deploy" | uncledad96-glitch
+- [Ruby Path Resolution and Docker Port Allocation Issues](en/ruby-require-relative-and-docker-port-allocation.md) | devops | "ruby", "docker", "path-resolution", "port-allocation", "troubleshooting", "shell-helpers" | 
 - [Separate scout vs worker modes in earn agents](en/separate-scout-and-worker-modes.md) | devops | "mode", "scout", "worker", "safety", "agent", "ops" | uncledad96-glitch
 - [Shell script debugging checklist for agent jobs](en/shell-script-debugging.md) | devops | "bash", "shell", "debug", "cron", "set-e", "agent" | uncledad96-glitch
 - [Timeout wrapper for runaway agent children](en/signal-timeout-wrapper.md) | devops | "ops", "agent", "shell", "reliability" | uncledad96-glitch

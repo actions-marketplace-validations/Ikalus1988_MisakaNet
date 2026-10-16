@@ -22,7 +22,10 @@ from intake_auto_review import (
     score_format,
     calculate_confidence,
     make_decision,
+    detect_placeholder_fixture,
     generate_lesson_from_intake,
+    AutoReviewResult,
+    DimensionScore,
 )
 
 
@@ -585,3 +588,278 @@ def test_confidence_cancels_so_the_weighted_score_is_the_verdict():
         for confidence in (0.2, 0.5, 0.7, 1.0):
             assert make_decision(weighted * confidence, confidence) == band(weighted), (
                 f"weighted {weighted} at confidence {confidence} disagreed with the band")
+
+
+# ── numbered lists are lists ────────────────────────────────────────────────────────────────────
+#
+# `score_format` counted list items with `^[\s]*[-*]\s+` and `score_verification` looked for the
+# same shape, so a report written as `1. …` scored as if it had no list at all. Issue #3192 is the
+# measured case: six numbered steps, zero bullets, and the dimension reported "✗ No lists" while
+# its sibling #3191 — the same template — escaped auto-reject on nothing but different wording.
+# Every markdown renderer turns `1.` into <ol>, so the two spellings are the same construct and
+# scoring them differently measures the author's keyboard, not the report.
+
+NUMBERED_STEPS = (
+    "## Problem\n\n"
+    "同一逻辑单元有两种表示，都进了分析器。\n\n"
+    "## Error\n\n"
+    "计数翻倍，每项都 x2。\n\n"
+    "## Solution\n\n"
+    "1. 入口处按逻辑单元去重。\n"
+    "2. 判据化：整齐翻倍就是双计数指纹。\n"
+    "3. 命名冲突单独验，导出与缓存都要看。\n"
+    "4. 重新导出后再比一次计数。\n"
+    "5. 把去重规则写进任务定义。\n\n"
+    "## Verification\n\n"
+    "1. 90 文本 + 76 二进制 → 去重后 76。\n"
+    "2. 76 处同名冲突逐一核对。\n"
+)
+
+
+def test_numbered_lists_count_as_lists():
+    """`1.` / `1)` are markdown lists; a report must not be penalised for choosing that spelling."""
+    formatted = score_format(NUMBERED_STEPS, {})
+    # `in` on a list is equality, not substring: the reason is "✗ No lists", so `"No lists" in
+    # reasons` is False no matter what the scorer decided. Written the obvious way this test
+    # cannot fail — which is worse than having no test, because it reads as coverage.
+    assert not any("No lists" in r for r in formatted.reasons), (
+        "a body of six numbered steps was scored as having no lists at all — the list detector "
+        f"recognises `-` and `*` but not `1.`: {formatted.reasons}"
+    )
+
+
+def test_numbered_steps_count_as_verification_steps():
+    """Same blind spot in the 30%-weighted dimension, which is where it costs the most."""
+    scored = score_verification(NUMBERED_STEPS, {})
+    assert not any("verification steps" in r and r.startswith("✗") for r in scored.reasons), (
+        f"numbered steps under ## Verification were not recognised as steps: {scored.reasons}"
+    )
+    assert any("Has verification steps" in r for r in scored.reasons), scored.reasons
+
+
+def test_bullet_lists_still_count():
+    """The fix widens the shape; it must not become vacuous for the shape it already handled."""
+    bulleted = NUMBERED_STEPS.replace("1. ", "- ")
+    assert not any("No lists" in r for r in score_format(bulleted, {}).reasons)
+
+
+# === Placeholder / fixture detection (#3136, #3137) ===
+
+# #3137 as it reached the pipeline: complete-looking, every acceptance criterion a
+# `test-*` placeholder, and the literal string `test-verification` in the body.
+FIXTURE_COMPLETE = """## Problem
+test-problem
+
+## Acceptance Criteria
+- test-error
+- test-what_tried
+- test-fix
+- test-verification
+- test-matched_lesson_id
+"""
+
+# #3136: the skeleton, one placeholder line under Problem and nothing else.
+FIXTURE_SKELETON = """## Problem
+test-problem
+"""
+
+# The counterexample that decides how tight the anchor has to be. A report *about* test
+# infrastructure is a real report, and it can start with `test-` on every line — which
+# is why the anchor is "the whole line is one placeholder token", not "starts with
+# test-". Written so that a bare-prefix anchor really does misfire here.
+REPORT_ABOUT_TESTING = """## Problem
+test-suite hangs on windows-latest
+test-hang predates my change and reproduces on a clean checkout
+"""
+
+
+def test_a_fixture_with_placeholder_acceptance_criteria_is_detected():
+    hit, reason = detect_placeholder_fixture(FIXTURE_COMPLETE)
+    assert hit, "the #3137 body is a fixture and must be caught"
+    assert "acceptance criteria" in reason, reason
+
+
+def test_a_skeleton_fixture_is_detected():
+    """#3136 carried no acceptance criteria at all, so the other signal has to work."""
+    hit, _ = detect_placeholder_fixture(FIXTURE_SKELETON)
+    assert hit, "the #3136 body is a fixture and must be caught"
+
+
+def test_a_report_about_test_infrastructure_is_not_a_fixture():
+    """The false positive this guard is most likely to cause, pinned in both directions."""
+    hit, _ = detect_placeholder_fixture(REPORT_ABOUT_TESTING)
+    assert not hit, "a real report that starts with `test-` was classified as a fixture"
+
+
+def test_a_report_without_acceptance_criteria_is_not_a_fixture():
+    """The vacuous-truth trap: "all criteria are placeholders" is true when there are none.
+
+    Reports legitimately have no acceptance criteria — `issue-quality-gate.yml` exempts
+    them as "reports, not specs" — so a body with no such section must not be caught.
+    """
+    hit, _ = detect_placeholder_fixture(GENUINE_REPORT)
+    assert not hit, "a report with no acceptance-criteria section was classified as a fixture"
+
+
+def test_a_report_whose_criteria_are_real_is_not_a_fixture():
+    mixed = "## Problem\n\nSomething is broken in the parser.\n\n## Acceptance Criteria\n\n- the parser round-trips\n- the CLI exits 0\n"
+    hit, _ = detect_placeholder_fixture(mixed)
+    assert not hit, "real acceptance criteria were read as placeholders"
+
+
+def test_the_fixture_decision_is_added_on_top_of_the_score_not_instead_of_it():
+    """Nothing on the scoring path moves: the score path still runs and still verdicts."""
+    result = auto_review_issue(0, "fixture", FIXTURE_COMPLETE)
+    assert result.decision == "placeholder", result.decision
+    assert result.weighted_score > 0, "the score was zeroed rather than reported"
+    assert make_decision(result.final_score, result.confidence) != "placeholder"
+    assert any("test fixture" in r for r in result.reasons), result.reasons
+
+
+def test_a_fixture_is_not_labelled_auto_rejected():
+    """The routing decision, pinned.
+
+    The daily salvage digest sweeps `auto-rejected` and re-applies
+    `needs-human-review`, so a fixture routed through `reject` returns to the human
+    queue every morning. The placeholder branch must therefore never *add* that label.
+    """
+    root = Path(__file__).parent.parent
+    workflow = (root / ".github/workflows/intake-auto-review.yml").read_text()
+    branch = workflow.split('elif [ "$DECISION" = "placeholder" ]', 1)[1].split("\n          else", 1)[0]
+
+    assert '--add-label "auto-placeholder"' in branch, "the placeholder branch adds no label"
+    assert '--add-label "auto-rejected"' not in branch, (
+        "the placeholder branch adds auto-rejected, which the salvage digest sweeps back "
+        "into the human queue the next morning"
+    )
+    assert '--remove-label "needs-human-review"' in branch, (
+        "a fixture must not stay in the human queue"
+    )
+
+
+def test_the_salvage_digest_does_not_sweep_fixtures():
+    digest = (
+        Path(__file__).parent.parent / ".github/workflows/intake-salvage-digest.yml"
+    ).read_text()
+    assert "auto-placeholder" not in digest, (
+        "the digest would have to opt fixtures out explicitly; the label is meant to be "
+        "invisible to it"
+    )
+
+
+# ── three fall-throughs and one loose anchor, found by review of #3239 ───────────────
+# Each of these was reproduced against this branch's own head before being fixed.
+
+
+# The counterexample the acceptance-criteria anchor never had. `REPORT_ABOUT_TESTING` above
+# covers the *problem* anchor; the criteria anchor was still a bare `^test-` prefix, so the
+# same class of real report slipped through the other door — and an intake about the fixture
+# bug itself is exactly the report that has acceptance criteria phrased that way.
+REPORT_ABOUT_TESTING_CRITERIA = """## Problem
+
+The intake pipeline classifies a real report as a test fixture.
+
+## Acceptance Criteria
+
+- test-hang predates my change
+- test-suite fails on windows-latest
+"""
+
+
+def test_a_report_whose_criteria_happen_to_start_with_test_is_not_a_fixture():
+    hit, _ = detect_placeholder_fixture(REPORT_ABOUT_TESTING_CRITERIA)
+    assert not hit, "a bare ^test- prefix on the criteria anchor swallows real reports"
+
+
+def test_a_fixture_with_snake_case_criteria_is_still_detected():
+    """The anchor got tighter, so the shapes it must still catch need saying out loud."""
+    hit, _ = detect_placeholder_fixture(
+        "## Problem\ntest-problem\n\n## Acceptance Criteria\n"
+        "- test-what_tried\n- test-matched_lesson_id\n"
+    )
+    assert hit
+
+
+# `_section_text` stops at the first `#{2,3}` heading after the one it matched, so a Problem
+# section followed by a `###` subsection was read as the bare placeholder `test-hang` with the
+# evidence silently cut off below it.
+REPORT_WITH_TRUNCATED_PROBLEM = """## Problem
+test-hang
+### Steps
+1. run the suite
+2. read the log
+
+## Fix
+
+Change the classifier.
+
+## Acceptance Criteria
+
+- the suite passes
+"""
+
+
+def test_a_problem_section_cut_short_by_a_subheading_is_not_judged():
+    hit, _ = detect_placeholder_fixture(REPORT_WITH_TRUNCATED_PROBLEM)
+    assert not hit, "a truncated section must not be read as a bare placeholder"
+
+
+def test_the_truncation_helper_distinguishes_the_two_shapes():
+    from scripts.intake_auto_review import _section_is_truncated
+
+    assert _section_is_truncated(REPORT_WITH_TRUNCATED_PROBLEM, ("problem", "问题"))
+    assert not _section_is_truncated("## Problem\ntest-problem\n", ("problem", "问题"))
+    assert not _section_is_truncated("## Problem\n\nA real description.\n", ("problem", "问题"))
+
+
+# `placeholder` had no arm in `format_result_comment`, at either the heading or the decision
+# line, so it fell into `else` and told the author "Auto-rejected (weighted score < 40)" beside
+# a score table reading 64.25. No test pinned the comment text, which is why CI was green.
+
+
+def test_a_placeholder_comment_does_not_claim_the_issue_was_rejected():
+    result = AutoReviewResult(
+        issue_number=3137, decision="placeholder", weighted_score=64.25, final_score=64.25,
+        confidence=1.0, dimensions=[DimensionScore(name="d", weight=1.0, score=64.25)],
+        reasons=["✗ Detected a test fixture rather than a report"], suggestions=[],
+    )
+    text = format_result_comment(result)
+    assert "Auto-Rejected" not in text and "Auto-rejected" not in text
+    assert "[REJECTED]" not in text
+    assert "fixture" in text.lower()
+
+
+def test_a_rejected_issue_still_says_it_was_rejected():
+    """The counterpart: adding a new arm must not swallow the existing `else` branch."""
+    result = AutoReviewResult(
+        issue_number=1, decision="reject", weighted_score=22.1, final_score=22.1,
+        confidence=1.0, dimensions=[DimensionScore(name="d", weight=1.0, score=22.1)],
+        reasons=["✗ Only 1 generic tech keywords"], suggestions=[],
+    )
+    text = format_result_comment(result)
+    assert "[REJECTED] Auto-Rejected" in text
+    assert "Auto-rejected" in text
+
+
+@pytest.mark.parametrize("decision,marker", [
+    ("approve", "[APPROVED]"),
+    ("review", "[REVIEW]"),
+    ("reject", "[REJECTED]"),
+    ("placeholder", "[FIXTURE]"),
+])
+def test_each_decision_value_gets_its_own_heading_and_decision_line(decision, marker):
+    """No decision may fall through to `else` — that is how `placeholder` printed a rejection.
+
+    Asserting the *marker*, not merely that some `## [` and some `**Decision:**` exist: a first
+    version of this test passed with both `placeholder` arms deleted, because the `else` branch
+    also produces a well-formed heading. It has to pin which one.
+    """
+    result = AutoReviewResult(
+        issue_number=1, decision=decision, weighted_score=50.0, final_score=50.0,
+        confidence=1.0, dimensions=[DimensionScore(name="d", weight=1.0, score=50.0)],
+        reasons=["✗ x"], suggestions=[],
+    )
+    lines = format_result_comment(result).splitlines()
+    assert marker in lines[0], f"{decision} rendered as {lines[0]!r}, expected {marker}"
+    assert any(l.startswith("**Decision:**") for l in lines), \
+        f"{decision} produced no decision line"
