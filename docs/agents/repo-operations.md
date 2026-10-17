@@ -181,7 +181,7 @@ python3 scripts/bench_production_recall.py --json     # 机器可读
 |---|---|---|
 | `misakanet-register-proxy`（主 worker，含 `/mcp`）| **push main 自动部署** | `deploy-worker.yml`：wrangler + `workers/wrangler.toml`（含 `[triggers]` cron 定义）。部署时带 `--var COMMIT_SHA:${GITHUB_SHA}`，落到 `/api/health` 的 `commit_sha`（#2779）——**判断线上新不新鲜要读这个 SHA，不要读版本号**：release-please 只在发版时 bump，所以 `fix:`/`feat:` 提交期间线上和 main 长期同号，同号不等于新 |
 | 部署新鲜度（不是部署，是**看住部署**）| `deploy-freshness.yml`（每日 04:53 UTC）| 跑 `python3 scripts/doctor.py --deploy-freshness`：把 `/api/health` 的 `commit_sha` 与 checkout 的 HEAD 比，不一致就报"线上落后 N 个提交"。**这一条是 #2779 的关键**：post-deploy 校验只能发现"部署错了"，发现不了"部署压根没发生"——而 `deploy-worker.yml` 的 `environment: release` 需人工审批 + `concurrency.cancel-in-progress: true`（新 push 会取消上一条还在等审批的 run）正是"三天没人知道"的成因。`commit_sha` 为 `unknown`（本地 `make deploy-api` 部署的）报**无法验证**而不是报新 |
-| `misakanet-web`（站点，assets = `docs/`）| **自动**：Cloudflare **Workers Builds**（Git 集成，**任何 push main 都触发**，不是 GitHub Actions） | 结果看 commit 上的 `Workers Builds: misakanet-web` check-run（由 Cloudflare app 发出，含 Version ID）；配置在 CF 控制台，不在仓库里。手工 `npx wrangler deploy`（根 `wrangler.jsonc`）只当应急/本地预览用。**这条流水线不在规则集必查项里，check-run 又不带日志与 annotations** → 它红了没人必须看：`workers-builds-watch.yml` 在它红时开 issue（标签 `site-build-red`，只报**状态变化**、不刷屏）；要读构建日志则 dispatch `cf-diagnostics`（其中 `Workers Builds` 步骤打印 trigger + 最近构建 + 失败构建的日志，凭据见 credentials 文档 §4.4/§4.5）。**⚠️ 正在切换**：生成物要搬到 `dist` 分支、production branch 改指 `dist`——发布器（`publish-dist.yml`）已就位，**控制台那一步还没做**，清单/验证/回滚见 `docs/maintainer/dist-branch-cutover.md` |
+| `misakanet-web`（站点，assets = `docs/`）| **自动**：Cloudflare **Workers Builds**（Git 集成，**任何 push `dist` 都触发**，不是 GitHub Actions；2026-10-17 起，此前是 `main`） | 结果看 commit 上的 `Workers Builds: misakanet-web` check-run（由 Cloudflare app 发出，含 Version ID）；配置在 CF 控制台，不在仓库里。手工 `npx wrangler deploy`（根 `wrangler.jsonc`）只当应急/本地预览用。**这条流水线不在规则集必查项里，check-run 又不带日志与 annotations** → 它红了没人必须看：`workers-builds-watch.yml` 在它红时开 issue（标签 `site-build-red`，只报**状态变化**、不刷屏；它只看 `dist`）；要读构建日志则 dispatch `cf-diagnostics`（其中 `Workers Builds` 步骤打印 trigger + 最近构建 + 失败构建的日志，凭据见 credentials 文档 §4.4/§4.5）。**已切换（2026-10-17）**：production branch = `dist`；`publish-dist.yml` 每次 push `main` 重生成并 force-push `dist` 一棵新树；清单/验证/回滚见 `docs/maintainer/dist-branch-cutover.md` |
 | `email-register` worker | `npm run deploy:email` | 独立 worker |
 | `Makefile` 的 `deploy-api` / `deploy-email`（本地手工）| `make deploy-api` / `make deploy-email`（`make deploy` = 两者 + 一条警告）| **本地直推生产、不经 CI**（审计 A10）：`deploy-api` 跑的就是 `deploy-worker.yml` 那份 `workers/wrangler.toml`，但它不读 PR 门禁。站点**没有** `make deploy-web`：`web/` **曾存在**（`web/package.json`、`web/package-lock.json`、`web/vitest.config.js`、`web/wrangler.jsonc`，见 `v2.23.0`），**2026-08-31 由 739cae4d9 删除**（"drop web/ shell"，含在 v2.23.1 / v2.24.0 / misakanet-v2.30.0 等 14 个 tag 里），`deploy-web` 是**残留目标**。`git log origin/main -- web/` 为空**不代表它从未存在**：共享 checkout 是 **shallow**（`.git/shallow`，`git rev-parse --is-shallow-repository` 为 `true`），这个 ref 的历史被截断了；完整 clone 里能看到删除提交，GitHub compare API 给出的 merge base 就是 `739cae4d9`（main 有 **4,638** 个提交、根提交 2026-05-20，**从未被压平**）。要查旧历史用 `git log --all` 或具体 tag。`deploy:web` / 死掉的 `deploy:api` 路径在 npm 侧由 #2150 修掉，Makefile 侧同批修；`tests/test_makefile_targets_resolve.py` 是这两类引用的门禁 |
 | `docs/lessons/**`、`docs/topics/**`、`docs/sitemap.xml` | `python3 scripts/build_lesson_pages.py`（幂等；`--check` 是门禁） | **生成物自己的清单**是 `docs/.generated-pages.json`：脚本只会删自己生成的页面（带 `Back to MisakaNet` 标记），手写文件永不删除。接线前它没人跑，站点因此有 205/378 个课程页、88 个失效页、主题页计数停在 176（实际 330）——见 handoff-2026-09-12 |
@@ -201,6 +201,36 @@ python3 scripts/bench_production_recall.py --json     # 机器可读
     是检验"push 后站点是否真的重新部署了"的最快探针
 - 涉及 intake 的改动：提交一个明确标注的测试 intake，确认 issue 行为（创建后关闭）——参考
   issue #1621 的探针做法
+
+### 分支与 worktree 卫生（2026-10-17 起，每次收口做一次）
+
+**判据**：分支本身不是资产，**"有人正在这条分支上工作"这个信号**才是。删的门槛是"它不再承载任何独有内容
+或活着的意图"；留的门槛是"删了会丢东西，或让正在进行的 PR 消失"。
+
+| 类别 | 处理 | 判据 / 命令 |
+|---|---|---|
+| `main` / `dist` / `data` / `release-please--*` | **永不删** | 默认分支；`dist`、`data` 由发布器 force-push（删了发布器会重建，但会制造一次假故障）；`release-please--*` 属工具 |
+| 有**开放 PR**的分支 | **保留** | `gh pr list --state open --json headRefName` |
+| PR 已合并 / 已关闭 | **删** | 合并后 GitHub 自动删（`delete_branch_on_merge=true`）；更早留下的手工清 |
+| 无 PR，且 `git cherry origin/main <branch>` **没有 `+` 行** | **删** | 每个补丁都已在 `main` 里。**不能用 `merge-base --is-ancestor`**：本仓用 squash 合并，祖先关系从一开始就不成立 |
+| 无 PR，且有 `+` 行 | **归档成 tag 再删** | `git tag -a archive/<日期>/<branch> origin/<branch>` → push → 删分支；取回 `git branch <name> archive/<日期>/<branch>` |
+
+> ⚠️ **不要用"上游还在不在"判断"是否已落地"**（2026-10-17 的真实教训）：那次本地清理我就是用
+> "上游 gone + 没被 worktree 占用"做判据，误删了 **41 条有独特提交的本地分支**。提交对象当时仍在、
+> `gc.pruneExpire` 被设成 `never` 才没真丢。**落地判据只有 `git cherry`（patch-id）**，`@{upstream}`
+> 既可能是 `origin/main`（永远存在），也可能是早就被 prune 掉的远端——两边都不能说明内容落没落地。
+
+**worktree**：`/home/<user>/wt/*` 下的历史 worktree，**dirty 就不许删**（可能装着未提交的工作）；clean 的
+用 `git worktree remove <path>`；目录已不存在的用 `git worktree prune` 收元数据。先体检再动手：
+
+```bash
+for w in $(git worktree list --porcelain | awk '/^worktree /{print $2}' | tail -n +2); do
+  printf '%-40s dirty=%s\n' "$w" "$(git -C "$w" status --porcelain | wc -l)"
+done
+```
+
+**实测基线（2026-10-17 首次执行）**：远程 **58 → 11**（删 43：合并 6 / 关闭 6 / 补丁已在 main 30 / 游离 ref 1；
+归档 5）、本地 **151 → 7**、worktree **13 → 6**（保留的 5 个全是 dirty）。
 
 ## 4. 排错手册（真实踩过的坑）
 
