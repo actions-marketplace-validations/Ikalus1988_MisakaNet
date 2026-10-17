@@ -675,7 +675,7 @@ function getMcpServerInfo(env) {
     // this constant drifts from it (rule R7, added 2026-09-18). Before that rule existed the value
     // was a hand-kept string that no script, workflow or var injection ever touched — it sat at
     // 2.27.1 through six releases, and it is the *only* version every MCP client reads.
-    version: env.MCP_VERSION || "2.44.2", // x-release-please-version
+    version: env.MCP_VERSION || "2.45.0", // x-release-please-version
   };
 }
 
@@ -4611,7 +4611,7 @@ async function handleMcpToolCall(env, toolName, args, authToken, clientIp, ctx) 
       // triage help requests distinctly from failure intakes.
       const labels = attention.file
         ? (kind === "question"
-          ? ["intake", "mcp-intake", "pending-review", "needs-human-review"]
+          ? ["intake", "mcp-intake", "pending-review", "needs-answer"]
           : ["intake", "mcp-intake", "pending-review"])
         : attention.labels;
       // L4: surface the flag to triage instead of silently publishing injection text.
