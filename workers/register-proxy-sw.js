@@ -675,7 +675,7 @@ function getMcpServerInfo(env) {
     // this constant drifts from it (rule R7, added 2026-09-18). Before that rule existed the value
     // was a hand-kept string that no script, workflow or var injection ever touched — it sat at
     // 2.27.1 through six releases, and it is the *only* version every MCP client reads.
-    version: env.MCP_VERSION || "2.46.0", // x-release-please-version
+    version: env.MCP_VERSION || "2.47.0", // x-release-please-version
   };
 }
 
@@ -3200,6 +3200,11 @@ const PROBE_DECLARATIONS = [
   "self-test probe",
   "test friction",
   "verbatim doc probe",
+  // "gap probe" (2026-10-15, issue #3284): a probe that exercises the
+  // knowledge-gap path named itself but matched none of the markers above, so it
+  // entered the review queue as a lesson candidate. Anchored to the probe word
+  // like the rest, so a real report that merely discusses a "gap" is untouched.
+  "gap probe",
 ];
 
 // (2) A knowledge question about subject matter the corpus does not cover and
