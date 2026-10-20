@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="MisakaNet — Git-backed, stdlib-only failure lesson network for AI agents. 514 indexed failure-recovery lessons, GitHub-audited, searchable.">
+<meta name="description" content="MisakaNet — Git-backed, stdlib-only failure lesson network for AI agents. 516 indexed failure-recovery lessons, GitHub-audited, searchable.">
 <meta name="keywords" content="AI Agent, MisakaNet, failure lessons, debugging, knowledge base, stdlib-only, GitHub-audited">
 <!-- Browsers request `/favicon.ico` on **every** page load when no page declares an icon, and until
      2026-09-25 that path answered 404 (~360 self-inflicted 404s a day, the only 404 in the zone's own
@@ -15,7 +15,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
 <link rel="canonical" href="https://misakanet.org/">
 <meta property="og:title" content="MisakaNet — Failure Lesson Network for AI Agents">
-<meta property="og:description" content="Git-backed, stdlib-only failure lesson network. 514 indexed failure-recovery lessons from real AI agent debugging sessions.">
+<meta property="og:description" content="Git-backed, stdlib-only failure lesson network. 516 indexed failure-recovery lessons from real AI agent debugging sessions.">
 <meta property="og:image" content="https://raw.githubusercontent.com/Ikalus1988/MisakaNet/main/promotional/og-card.png">
 <meta property="og:url" content="https://misakanet.org/">
 <meta name="twitter:card" content="summary_large_image">
@@ -26,7 +26,7 @@
   "@type": "WebSite",
   "name": "MisakaNet",
   "url": "https://misakanet.org",
-  "description": "Git-backed, stdlib-only failure lesson network for AI agents. 514 indexed failure-recovery lessons from real debugging sessions.",
+  "description": "Git-backed, stdlib-only failure lesson network for AI agents. 516 indexed failure-recovery lessons from real debugging sessions.",
   "potentialAction": {
     "@type": "SearchAction",
     "target": "https://misakanet.org/search/?q={search_term_string}",
@@ -203,10 +203,6 @@
     text-align: right;
   }
 
-  .header-qr {
-    text-align: right;
-  }
-
   .logo-title {
     font-family: 'Orbitron', sans-serif;
     font-size: 52px;
@@ -361,19 +357,6 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
-  /* QR code glow — subdued by default, bright on hover */
-  .header-qr img {
-    border-radius: 8px;
-    border: 1px solid rgba(0, 229, 255, 0.15);
-    box-shadow: 0 0 15px rgba(0, 229, 255, 0.05);
-    opacity: 0.6;
-    transition: all 0.4s ease;
-  }
-  .header-qr img:hover {
-    opacity: 1;
-    box-shadow: 0 0 40px rgba(0, 229, 255, 0.2);
-  }
-
   /* Avatar with tech corners */
   .avatar-tech {
     border-radius: 50%;
@@ -515,6 +498,14 @@
     width: 100%;
     border-radius: 4px 4px 0 0;
     background: linear-gradient(180deg, var(--cyan), rgba(0, 229, 255, 0.28));
+  }
+  /* A day whose counters could not be read (#3544). Empty with a dashed outline, because a
+     zero-height solid bar is exactly what "no calls that day" draws — and the point is that those
+     are different statements. */
+  .activity-history-bar.is-unreadable {
+    background: transparent;
+    border: 1px dashed rgba(148, 163, 184, 0.65);
+    min-height: 10px;
   }
   /* The newest bar is the day in progress, so its height is a floor and not a total. Hatched,
      because a colour difference alone is not a claim a reader can act on. */
@@ -821,7 +812,7 @@
     border-color: var(--cyan);
     box-shadow: 0 0 12px rgba(0, 229, 255, 0.08), inset 0 0 12px rgba(0, 229, 255, 0.02);
   }
-  .register-input::placeholder { color: #64748b; }
+  .register-input::placeholder { color: var(--text-dim); }
 
   /* Agent type selector — card grid */
   .agent-selector {
@@ -1433,14 +1424,6 @@
     .header-text-block {
       text-align: center;
     }
-    .header-qr {
-      text-align: center;
-      margin-top: 20px;
-    }
-    .header-qr img {
-      width: 140px;
-      height: 140px;
-    }
     .logo-title {
       font-size: 36px;
       letter-spacing: 3px;
@@ -1556,8 +1539,6 @@
     .header-content { text-align: center; min-height: auto; }
     .header-content .lang-btn-row { justify-content: center; }
     .header-text-block { text-align: center; }
-    .header-qr { text-align: center; }
-    .header-qr img { width: 140px; height: 140px; }
     .logo-title { font-size: 32px; letter-spacing: 2px; }
     .logo-cn { font-size: 32px; letter-spacing: 6px; }
     .stat-card { padding: 16px 20px; }
@@ -1821,9 +1802,6 @@
           Ikalus1988/MisakaNet
         </a>
       </div>
-      <div class="header-qr">
-        <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=https://github.com/Ikalus1988/MisakaNet&bgcolor=070b15&color=00e5ff" alt="QR Code for Mobile Registration" style="width:160px;height:160px;">
-      </div>
     </div>
     </div>
   </header>
@@ -1909,7 +1887,7 @@
       <!-- Track A -->
       <div class="qs-card">
         <div style="font-size:14px;font-weight:700;color:var(--cyan);" data-i18n="qsTrackA">A · Let your assistant search</div>
-        <div style="font-size:12px;color:var(--text-dim);margin-top:3px;line-height:1.5;" data-i18n="qsTrackASub">Claude Code, Codex, Hermes, OpenClaw, codewhale.</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-top:3px;line-height:1.5;" data-i18n="qsTrackASub">Claude Code, Codex, Hermes, OpenClaw, codewhale, Cursor, Gemini CLI, Copilot CLI, OpenCode, Kiro — every assistant the installer wires.</div>
 
         <div class="qs-step"><span class="qs-num">1</span><div style="flex:1;min-width:0;">
           <div style="font-size:12.5px;color:var(--text-primary);line-height:1.5;" data-i18n="qsA1">Install the endpoint into every assistant you use:</div>
@@ -1927,8 +1905,8 @@
             <button type="button" class="qs-copy" aria-label="Copy command to clipboard" data-copy-target="qs-a2" data-i18n="qsCopy" onclick="copyQS(this)">Copy</button>
           </div>
           <div style="margin-top:6px;font-size:12px;color:var(--text-dim);line-height:1.5;">
-            <a href="/start" style="color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(0,229,255,0.35);" data-i18n="qsStartPair">Generate a pairing code</a>
-            <span data-i18n="qsStartPairNote">on the Start page — pairing and Misaka Voice live there.</span>
+            <a href="/start" style="color:var(--cyan);text-decoration:none;border-bottom:1px solid rgba(0,229,255,0.35);" data-i18n="qsStartPair">Start page</a>
+            <span data-i18n="qsStartPairNote">— optional. Search needs no pairing code: the installer already registered your node. Writing tools and Misaka Voice live there.</span>
           </div>
           <div class="qs-check" data-i18n="qsA2Check">Check: claude mcp list or codex mcp list lists misakanet and its tools.</div>
         </div></div>
@@ -1942,7 +1920,7 @@
             </span>
             <span style="color:var(--text-dim);font-size:11px;">·</span>
             <span class="qs-chip">
-              <code class="qs-code" id="qs-a3q2">context window exceeded</code>
+              <code class="qs-code" id="qs-a3q2">pip install timeout</code>
               <button type="button" class="qs-copy qs-copy-mini" aria-label="Copy example query to clipboard" title="Copy example query to clipboard" data-copy-target="qs-a3q2" data-i18n="qsCopy" onclick="copyQS(this)">Copy</button>
             </span>
           </div>
@@ -2348,6 +2326,14 @@
 
   <!-- Footer -->
   <footer class="footer">
+<!-- site-links:start -->
+<nav class="site-links" aria-label="Site links" style="text-align:center;font-size:13px;margin:10px 0;">
+  <a href="/">Home</a> ·
+  <a href="/search/">Search lessons</a> ·
+  <a href="/install/">Install</a> ·
+  <a href="/start">Start</a>
+</nav>
+<!-- site-links:end -->
     <div class="footer-links">
       <a href="https://github.com/Ikalus1988/MisakaNet" target="_blank">GitHub</a>
       <a href="https://github.com/Ikalus1988/MisakaNet/discussions" target="_blank">Discussions</a>
@@ -3581,13 +3567,15 @@ function activityHistoryMarkup(series, generatedAt, live, source) {
     // as such, because a partial bar drawn like a finished one is the chart equivalent of calling a
     // snapshot "today".
     const partial = day.date === today;
+    const unreadable = Array.isArray(day.unreadable) && day.unreadable.length > 0;
     const height = total > 0 ? `max(2px, ${Math.round((total / max) * 100)}%)` : '0';
-    const label = `${day.date} · ${formatCount(total)}` +
-                  (partial ? ` · ${t('activityTrendPartial')}` : '');
+    const label = unreadable
+      ? `${day.date} · ${t('activityUnreadable')} (${day.unreadable.join(', ')})`
+      : `${day.date} · ${formatCount(total)}` + (partial ? ` · ${t('activityTrendPartial')}` : '');
     return `
         <div class="activity-history-slot">
-          <div class="activity-history-bar${partial ? ' is-partial' : ''}" style="height:${height}"
-               title="${escapeHTML(label)}"></div>
+          <div class="activity-history-bar${partial ? ' is-partial' : ''}${unreadable ? ' is-unreadable' : ''}"
+               style="height:${unreadable ? '0' : height}" title="${escapeHTML(label)}"></div>
           <div class="activity-history-day">${escapeHTML(day.date.slice(5))}</div>
         </div>`;
   }).join("");
@@ -3599,11 +3587,14 @@ function activityHistoryMarkup(series, generatedAt, live, source) {
   // of each day, taken before the day ended), and a chart that does not say so overstates the trend's
   // precision. The route's own series is a full day total per day and says what it is not.
   const bounds = String(source || '').startsWith('git-history:');
-  const note = t(bounds ? 'activityTrendBounds' : 'activityTrendNote');
+  const anyUnreadable = series.some(day => Array.isArray(day.unreadable) && day.unreadable.length);
+  const note = anyUnreadable
+    ? t('activityUnreadableNote')
+    : t(bounds ? 'activityTrendBounds' : 'activityTrendNote');
   return `
       <div class="activity-history-head">
         <span class="activity-history-title">${formatText(t('activityTrendTitle'), { days: series.length })}</span>
-        <span class="activity-history-note" data-i18n="${bounds ? 'activityTrendBounds' : 'activityTrendNote'}">${note}</span>
+        <span class="activity-history-note" data-i18n="${anyUnreadable ? 'activityUnreadableNote' : (bounds ? 'activityTrendBounds' : 'activityTrendNote')}">${note}</span>
       </div>
       <div class="activity-history-bars">${slots}</div>
       <div class="activity-footnote">${escapeHTML(series[0].date)} – ${escapeHTML(series[series.length - 1].date)}${how ? ' · ' + how : ''}</div>`;
